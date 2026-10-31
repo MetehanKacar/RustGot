@@ -180,6 +180,11 @@ async fn main() {
         config.advanced.plugins.verify_signatures,
     ))];
 
+    let cpus = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    let simulation_threads = rustgot_config.performance.simulation_threads_for(cpus);
+    debug!("Using {simulation_threads} simulation thread(s) on {cpus} CPU(s)");
+    pumpkin_core::server::set_simulation_threads(simulation_threads);
+
     let pumpkin_server = PumpkinServer::new(
         config.basic,
         config.advanced,

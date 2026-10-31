@@ -22,6 +22,33 @@ pub const CONFIG_FILE: &str = "rustgot.yml";
 pub struct RustGotConfig {
     /// Settings for the embedded JVM that runs Paper/Bukkit `.jar` plugins.
     pub jvm: JvmConfig,
+    /// CPU and threading settings.
+    pub performance: PerformanceConfig,
+}
+
+/// CPU and threading settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct PerformanceConfig {
+    /// Threads that run the world tick in parallel. `0` picks a default from the CPU count
+    /// (see [`PerformanceConfig::simulation_threads_for`]). More threads lower MSPT under heavy
+    /// load but burn more CPU time in total on idle worker wake-ups.
+    pub simulation_threads: u32,
+}
+
+impl PerformanceConfig {
+    /// Simulation threads to use on a machine with `cpus` cores.
+    ///
+    /// The automatic default is half the cores, capped at 4: with 50 players one tick needs
+    /// about 0.8 cores of real work, and going from 4 to 16 threads only cut MSPT from 22 ms to
+    /// 17 ms while doubling total CPU use (1.1 to 2.0 cores), mostly idle rayon workers spinning.
+    #[must_use]
+    pub fn simulation_threads_for(&self, cpus: usize) -> usize {
+        match self.simulation_threads {
+            0 => (cpus / 2).clamp(1, 4),
+            threads => usize::try_from(threads).unwrap_or(usize::MAX),
+        }
+    }
 }
 
 /// Settings for the embedded JVM.
@@ -140,6 +167,21 @@ mod tests {
         let rewritten = fs::read_to_string(&path).unwrap();
         assert!(rewritten.contains("min-java-version: 25"));
         assert!(rewritten.contains("auto-download: false"));
+    }
+
+    #[test]
+    fn simulation_threads_default_scales_with_cpus_and_caps_at_four() {
+        let auto = PerformanceConfig::default();
+        assert_eq!(auto.simulation_threads_for(1), 1);
+        assert_eq!(auto.simulation_threads_for(2), 1);
+        assert_eq!(auto.simulation_threads_for(4), 2);
+        assert_eq!(auto.simulation_threads_for(8), 4);
+        assert_eq!(auto.simulation_threads_for(32), 4);
+
+        let fixed = PerformanceConfig {
+            simulation_threads: 12,
+        };
+        assert_eq!(fixed.simulation_threads_for(4), 12);
     }
 
     #[test]

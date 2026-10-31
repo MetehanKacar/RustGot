@@ -17,6 +17,9 @@ RustGot is a soft fork of [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) that 
   (`jvm.auto-download` in `rustgot.yml`).
 - **Rust plugins**: Pumpkin's Wasm (primary) and native plugin APIs.
 - **Drop-in**: existing Anvil worlds, `server.properties` and `purpur.yml` work as-is.
+- **Tunable CPU use**: `performance.simulation-threads` in `rustgot.yml` sets how many threads
+  run the world tick. The default (`0`) uses half the CPU cores, at most 4; more threads lower
+  MSPT a little under heavy load but cost noticeably more total CPU.
 
 > [!IMPORTANT]
 > RustGot is in early development. The Java plugin bridge and Purpur features are not

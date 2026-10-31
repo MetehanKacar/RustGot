@@ -45,7 +45,7 @@ use rsa::RsaPublicKey;
 use std::fs;
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicUsize};
 use std::{future::Future, sync::atomic::Ordering, time::Duration};
 use tokio::sync::OnceCell;
 use tokio::task::JoinHandle;
@@ -67,6 +67,14 @@ pub mod ticker;
 pub use recipe::RecipeManager;
 
 use crate::data::advancement_data::AdvancementManager;
+
+static SIMULATION_THREADS: AtomicUsize = AtomicUsize::new(0);
+
+/// Sets how many threads the world tick may use (`0` = one per CPU core).
+/// Takes effect for servers created after the call.
+pub fn set_simulation_threads(threads: usize) {
+    SIMULATION_THREADS.store(threads, Ordering::Relaxed);
+}
 
 /// Represents a Minecraft server instance.
 #[repr(C)]
@@ -290,9 +298,13 @@ impl Server {
         ));
 
         let cpus = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+        let simulation_threads = match SIMULATION_THREADS.load(Ordering::Relaxed) {
+            0 => cpus,
+            threads => threads,
+        };
         let simulation_pool = Arc::new(
             rayon::ThreadPoolBuilder::new()
-                .num_threads(cpus)
+                .num_threads(simulation_threads)
                 .thread_name(|i| format!("Simulation-{i}"))
                 .build()
                 .map_err(|e| WorldInfoError::IoError(std::io::Error::other(e)))?,
