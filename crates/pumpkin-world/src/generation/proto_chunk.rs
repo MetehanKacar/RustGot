@@ -467,6 +467,13 @@ impl ProtoChunk {
         self.pending_block_entities.push(nbt);
     }
 
+    /// Drops the pending block entity at a world position, if any.
+    pub fn remove_block_entity(&mut self, x: i32, y: i32, z: i32) {
+        self.pending_block_entities.retain(|nbt| {
+            (nbt.get_int("x"), nbt.get_int("y"), nbt.get_int("z")) != (Some(x), Some(y), Some(z))
+        });
+    }
+
     pub fn take_pending_block_entities(&mut self) -> Vec<NbtCompound> {
         std::mem::take(&mut self.pending_block_entities)
     }
@@ -773,7 +780,17 @@ impl ProtoChunk {
                 .reserve_exact(section_end - self.flat_block_map.len());
             self.flat_block_map.resize(section_end, BlockStateId::AIR);
         }
-        self.flat_block_map[index] = block_state.id;
+        let old_state = std::mem::replace(&mut self.flat_block_map[index], block_state.id);
+        // Vanilla `WorldGenRegion.setBlock`: replacing a block entity's block with a block
+        // that has none (or a different block) drops the block entity, so a later structure
+        // overwriting e.g. a jigsaw does not leave a stale jigsaw block entity behind.
+        let old = old_state.to_state();
+        if old.block_entity_type != u16::MAX
+            && (block_state.block_entity_type == u16::MAX
+                || old_state.to_block_id() != block_state.id.to_block_id())
+        {
+            self.remove_block_entity(x, y, z);
+        }
 
         let hm_index = Self::local_position_to_height_map_index(local_x, local_z);
         self.update_height_map_column(hm_index, local_x, local_y, local_z, y as i16, block_state);
@@ -2007,5 +2024,53 @@ mod light_tests {
         // Above the build height the sky is open; below it everything is dark.
         assert_eq!(chunk.light_at(0, top + 5, 0), (15, 0));
         assert_eq!(chunk.light_at(0, bottom - 1, 0), (0, 0));
+    }
+}
+
+#[cfg(test)]
+mod block_entity_tests {
+    use super::ProtoChunk;
+    use crate::generation::generator::{GeneratorInit, VanillaGenerator, WorldGenerator};
+    use pumpkin_data::Block;
+    use pumpkin_data::dimension::Dimension;
+    use pumpkin_nbt::compound::NbtCompound;
+    use pumpkin_util::world_seed::Seed;
+
+    fn jigsaw_nbt(x: i32, y: i32, z: i32) -> NbtCompound {
+        let mut nbt = NbtCompound::new();
+        nbt.put_string("id", "minecraft:jigsaw".to_string());
+        nbt.put_int("x", x);
+        nbt.put_int("y", y);
+        nbt.put_int("z", z);
+        nbt
+    }
+
+    #[test]
+    fn overwriting_a_block_entity_block_drops_its_block_entity() {
+        let world_gen = WorldGenerator::Noise(Box::new(VanillaGenerator::new(
+            Seed(42),
+            Dimension::OVERWORLD,
+        )));
+        let mut chunk = ProtoChunk::new(0, 0, &world_gen);
+        chunk.set_block_state(3, 10, 5, Block::JIGSAW.default_state);
+        chunk.add_block_entity(jigsaw_nbt(3, 10, 5));
+        chunk.set_block_state(4, 10, 5, Block::JIGSAW.default_state);
+        chunk.add_block_entity(jigsaw_nbt(4, 10, 5));
+
+        // Another state of the same block keeps it; a plain block replaces it.
+        let other_jigsaw = Block::JIGSAW
+            .states
+            .iter()
+            .find(|state| state.id != Block::JIGSAW.default_state.id)
+            .expect("jigsaw has several orientations");
+        chunk.set_block_state(4, 10, 5, other_jigsaw);
+        chunk.set_block_state(3, 10, 5, Block::NETHERRACK.default_state);
+
+        let left: Vec<_> = chunk
+            .take_pending_block_entities()
+            .iter()
+            .map(|nbt| nbt.get_int("x"))
+            .collect();
+        assert_eq!(left, [Some(4)]);
     }
 }
