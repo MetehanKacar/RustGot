@@ -94,6 +94,7 @@ def main() -> int:
     parser.add_argument("--addr", default="127.0.0.1:25565", help="server address for the bots")
     parser.add_argument("--loadbot", type=Path, default=DEFAULT_LOADBOT, help="path to rustgot-loadbot")
     parser.add_argument("--mspt-interval", type=float, default=5, help="seconds between MSPT queries (0 = off)")
+    parser.add_argument("--probe", action="append", default=[], help="console command to run before stopping (repeatable)")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="server command, after --")
     args = parser.parse_args()
 
@@ -190,6 +191,10 @@ def main() -> int:
     time.sleep(1)  # let the last MSPT reply arrive
     collecting_mspt.clear()
 
+    for probe in args.probe:
+        send(probe)
+    if args.probe:
+        time.sleep(2)  # replies land in the server log
     if bots is not None:
         bots.kill()
     bots_online = len(joined - left)
