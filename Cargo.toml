@@ -161,6 +161,29 @@ inherits = "release"
 debug = true
 strip = false
 
+# RustGot: fast iteration builds for correctness loops (`cargo build --profile iter`).
+# Same optimisation level as release, but no LTO and incremental codegen, so a change in
+# pumpkin-core rebuilds in minutes instead of ~20. Use `release` for performance numbers.
+[profile.iter]
+inherits = "release"
+lto = false
+codegen-units = 256
+incremental = true
+
+[profile.iter.package.pumpkin-core]
+codegen-units = 256
+# The crate that changes most; full optimisation dominates its rebuild time.
+opt-level = 1
+
+[profile.iter.package.pumpkin-world]
+codegen-units = 256
+
+[profile.iter.package.pumpkin-data]
+codegen-units = 256
+
+[profile.iter.package.pumpkin-protocol]
+codegen-units = 256
+
 [profile.dev]
 debug = false
 

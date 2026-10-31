@@ -19,6 +19,7 @@ the time spent ticking, not the sleep between ticks. CPU is the whole process tr
 """
 
 import argparse
+import atexit
 import json
 import re
 import subprocess
@@ -116,6 +117,15 @@ def main() -> int:
         encoding="utf-8",
         errors="replace",
     )
+    children = [server]
+
+    def kill_children() -> None:
+        # Never leave a server or bot swarm running (holding the port) if the bench dies.
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+
+    atexit.register(kill_children)
     ready = threading.Event()
     kind: list[str] = []
     joined: set[str] = set()
@@ -173,6 +183,7 @@ def main() -> int:
             [str(args.loadbot), args.addr, str(args.bots), str(args.bot_fly_secs)],
             stdout=subprocess.DEVNULL,
         )
+        children.append(bots)
     time.sleep(args.warmup)
 
     proc = psutil.Process(server.pid)
