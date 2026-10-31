@@ -2,6 +2,7 @@ use pumpkin_data::{
     Block, BlockDirection, BlockState,
     block_properties::{BeehiveProperties, HorizontalFacing},
 };
+use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
 use pumpkin_util::{
     math::position::BlockPos,
     random::{RandomGenerator, RandomImpl},
@@ -64,13 +65,32 @@ impl BeehiveTreeDecorator {
                 props.facing = HorizontalFacing::South;
                 let state_id = props.to_state_id(&Block::BEE_NEST);
                 chunk.set_block_state(&pos.0, BlockState::from_id(state_id));
+                // Vanilla stores `BeehiveBlockEntity.Occupant.create(random.nextInt(599))` bees.
                 let num_bees = 2 + random.next_bounded_i32(2);
-                for _ in 0..num_bees {
-                    let _ = random.next_bounded_i32(599);
-                }
+                let bees = (0..num_bees)
+                    .map(|_| NbtTag::Compound(bee_occupant(random.next_bounded_i32(599))))
+                    .collect();
+                let mut hive = NbtCompound::new();
+                hive.put_string("id", "minecraft:beehive".to_string());
+                hive.put_int("x", pos.0.x);
+                hive.put_int("y", pos.0.y);
+                hive.put_int("z", pos.0.z);
+                hive.put_list("bees", bees);
+                chunk.add_block_entity(&pos.0, hive);
                 decorations.push(pos);
                 break;
             }
         }
     }
+}
+
+/// Vanilla `BeehiveBlockEntity.Occupant.create`: a fresh bee that must stay 600 ticks.
+fn bee_occupant(ticks_in_hive: i32) -> NbtCompound {
+    let mut entity_data = NbtCompound::new();
+    entity_data.put_string("id", "minecraft:bee".to_string());
+    let mut occupant = NbtCompound::new();
+    occupant.put_compound("entity_data", entity_data);
+    occupant.put_int("ticks_in_hive", ticks_in_hive);
+    occupant.put_int("min_ticks_in_hive", 600);
+    occupant
 }
