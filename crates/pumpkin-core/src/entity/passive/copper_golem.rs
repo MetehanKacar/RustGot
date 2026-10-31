@@ -195,6 +195,11 @@ impl CustomSound for CopperGolemEntity {
 }
 
 impl Mob for CopperGolemEntity {
+    // Vanilla `AbstractGolem.removeWhenFarAway`: golems never despawn by distance.
+    fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
+        false
+    }
+
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         self.play_entity_sound(self.step_sound(), 1.0, 1.0);
     }

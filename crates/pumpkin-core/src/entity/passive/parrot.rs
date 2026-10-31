@@ -94,6 +94,11 @@ impl ParrotEntity {
 }
 
 impl Mob for ParrotEntity {
+    // Vanilla `Parrot` inherits `Animal.removeWhenFarAway`: animals never despawn by distance.
+    fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
+        false
+    }
+
     fn mob_ai_step(&self) {
         // Vanilla `calculateFlapping`.
         let entity = self.get_entity();

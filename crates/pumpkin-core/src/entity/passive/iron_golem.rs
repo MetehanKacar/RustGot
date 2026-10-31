@@ -142,6 +142,11 @@ impl NeutralMob for IronGolemEntity {
 }
 
 impl Mob for IronGolemEntity {
+    // Vanilla `AbstractGolem.removeWhenFarAway`: golems never despawn by distance.
+    fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
+        false
+    }
+
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         self.play_entity_sound(Sound::EntityIronGolemStep, 1.0, 1.0);
     }
