@@ -4,10 +4,11 @@ use std::sync::{
 };
 
 use pumpkin_data::damage::DamageType;
+use pumpkin_data::dye_color::DyeColor;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::{Sound, SoundCategory};
-use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
 use pumpkin_protocol::codec::var_int::VarInt;
 use pumpkin_protocol::java::client::play::Metadata;
 use pumpkin_util::math::vector3::Vector3;
@@ -142,13 +143,28 @@ impl EntityBase for CushionEntity {
         true
     }
 
+    // Vanilla `Cushion` (a `BlockAttachedEntity`): `color` is the dye name and `block_pos`
+    // the block it occupies. Without `block_pos`, vanilla logs the cushion as being at an
+    // invalid position; reading only `Color` dropped the colour of cushions from structures.
     fn write_custom_nbt(&self, nbt: &mut NbtCompound) {
-        nbt.put_byte("Color", self.color() as i8);
+        let color = DyeColor::by_id(self.color()).unwrap_or(DyeColor::White);
+        nbt.put_string("color", color.name().to_string());
+        let block_pos = self.entity.block_pos.load().0;
+        nbt.put(
+            "block_pos",
+            NbtTag::IntArray(vec![block_pos.x, block_pos.y, block_pos.z]),
+        );
     }
 
     fn read_custom_nbt(&self, nbt: &NbtCompound) {
-        if let Some(color) = nbt.get_byte("Color") {
-            self.set_color(color as u8);
+        let color = nbt
+            .get_string("color")
+            .and_then(DyeColor::by_name)
+            .map(|color| color.id())
+            // Worlds saved by older RustGot builds.
+            .or_else(|| nbt.get_byte("Color").map(|color| color as u8));
+        if let Some(color) = color {
+            self.set_color(color);
         }
     }
 
@@ -205,5 +221,38 @@ impl EntityBase for CushionEntity {
 
     fn cast_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity::ai::test_support::world;
+    use pumpkin_data::entity::EntityType;
+
+    #[tokio::test]
+    async fn cushion_nbt_matches_vanilla() {
+        let folder = tempfile::tempdir().unwrap();
+        let world = world(&folder);
+        let cushion = CushionEntity::new(
+            Entity::new(
+                world.clone(),
+                Vector3::new(-140.5, 63.9375, -337.5),
+                &EntityType::CUSHION,
+            ),
+            DyeColor::White.id(),
+        );
+
+        // As written by vanilla / structure templates.
+        let mut vanilla = NbtCompound::new();
+        vanilla.put_string("color", "magenta".to_string());
+        cushion.read_custom_nbt(&vanilla);
+        assert_eq!(cushion.color(), DyeColor::Magenta.id());
+
+        let mut saved = NbtCompound::new();
+        cushion.write_custom_nbt(&mut saved);
+        assert_eq!(saved.get_string("color"), Some("magenta"));
+        assert_eq!(saved.get_int_array("block_pos"), Some(&[-141, 63, -338][..]));
+        world.level.shutdown().await;
     }
 }
