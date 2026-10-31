@@ -584,23 +584,28 @@ impl ChunkData {
                 .iter()
                 .map(|&id| {
                     let block = Block::from_state_id(id);
-                    let mut comp = NbtCompound::new();
                     let name = if block.name.starts_with("minecraft:") {
                         block.name.to_string()
                     } else {
                         format!("minecraft:{}", block.name)
                     };
-                    comp.put_string("Name", name);
-                    if let Some(props) = block.properties(id) {
-                        let prop_vec = props.to_props();
-                        if !prop_vec.is_empty() {
-                            let mut props_comp = NbtCompound::new();
-                            for p in prop_vec {
-                                props_comp.put_string(p.key_str(), p.value_str().to_string());
-                            }
-                            comp.put_compound("Properties", props_comp);
-                        }
+                    // Since 26.3 a palette entry is the block id as a string when the state has
+                    // no properties, and `{id, properties}` otherwise. Vanilla rejects the old
+                    // `{Name, Properties}` form at this data version.
+                    let prop_vec = block
+                        .properties(id)
+                        .map(|props| props.to_props())
+                        .unwrap_or_default();
+                    if prop_vec.is_empty() {
+                        return NbtTag::String(name.into());
                     }
+                    let mut props_comp = NbtCompound::new();
+                    for p in prop_vec {
+                        props_comp.put_string(p.key_str(), p.value_str().to_string());
+                    }
+                    let mut comp = NbtCompound::new();
+                    comp.put_string("id", name);
+                    comp.put_compound("properties", props_comp);
                     NbtTag::Compound(comp)
                 })
                 .collect();
@@ -1685,6 +1690,77 @@ mod tests {
             pumpkin_data::biome::Biome::from_name("the_void")
                 .unwrap()
                 .id
+        );
+    }
+
+    #[test]
+    fn anvil_palette_uses_the_26_3_entry_format() {
+        use crate::chunk::ChunkData;
+        use pumpkin_util::math::vector2::Vector2;
+
+        let mut section = test_section(-4, "minecraft:stone", true);
+        let mut repeater = NbtCompound::new();
+        repeater.put_string("Name", "minecraft:repeater".to_string());
+        let mut props = NbtCompound::new();
+        props.put_string("facing", "north".to_string());
+        props.put_string("delay", "2".to_string());
+        props.put_string("locked", "false".to_string());
+        props.put_string("powered", "false".to_string());
+        repeater.put_compound("Properties", props);
+        let mut air = NbtCompound::new();
+        air.put_string("Name", "minecraft:air".to_string());
+        let mut block_states = NbtCompound::new();
+        block_states.put(
+            "palette",
+            NbtTag::List(vec![NbtTag::Compound(air), NbtTag::Compound(repeater)]),
+        );
+        block_states.put("data", NbtTag::LongArray(vec![1; 256]));
+        section.put("block_states", NbtTag::Compound(block_states));
+
+        let chunk = ChunkData::from_bytes(&test_chunk(vec![section]).write(), Vector2::new(0, 0))
+            .expect("chunk parses");
+        let saved = chunk.internal_to_bytes();
+
+        let mut cursor = std::io::Cursor::new(&saved[..]);
+        let mut reader = pumpkin_nbt::deserializer::NbtReadHelperJava::new(&mut cursor);
+        let root = pumpkin_nbt::Nbt::read(&mut reader).expect("saved chunk is NBT").root_tag;
+        let section = root
+            .get_list("sections")
+            .and_then(|sections| {
+                sections.iter().filter_map(NbtTag::extract_compound).find(|s| {
+                    s.get_compound("block_states")
+                        .and_then(|b| b.get_list("palette"))
+                        .is_some_and(|p| p.len() == 2)
+                })
+            })
+            .expect("section with both blocks");
+        let palette = section
+            .get_compound("block_states")
+            .and_then(|b| b.get_list("palette"))
+            .expect("palette");
+
+        // Vanilla 26.3: plain id string without properties, `{id, properties}` with them.
+        let ids: Vec<&str> = palette
+            .iter()
+            .map(|entry| match entry {
+                NbtTag::String(id) => id.as_ref(),
+                NbtTag::Compound(c) => {
+                    assert!(c.get_string("Name").is_none(), "old palette key written");
+                    assert!(c.get_compound("properties").is_some(), "properties missing");
+                    c.get_string("id").expect("id key")
+                }
+                other => panic!("unexpected palette entry {other:?}"),
+            })
+            .collect();
+        assert!(ids.contains(&"minecraft:air"));
+        assert!(ids.contains(&"minecraft:repeater"));
+        assert!(palette.iter().any(|e| matches!(e, NbtTag::String(_))));
+
+        // And it still loads back to the same block.
+        let reloaded = ChunkData::from_bytes(&saved, Vector2::new(0, 0)).expect("reload");
+        assert_eq!(
+            reloaded.section.get_block_absolute_y(0, -64, 0),
+            chunk.section.get_block_absolute_y(0, -64, 0)
         );
     }
 }

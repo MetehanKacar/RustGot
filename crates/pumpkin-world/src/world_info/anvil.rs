@@ -790,11 +790,9 @@ mod test {
 
         let game_rules_path = minecraft_data_dir(temp_dir.path()).join("game_rules.dat");
         let game_rules = read_gzip_compound_tag(File::open(game_rules_path).unwrap()).unwrap();
+        // Vanilla keeps DataVersion next to `data`; inside it would read as a game rule.
         assert_eq!(
-            game_rules
-                .get_compound("data")
-                .unwrap()
-                .get_int("DataVersion"),
+            game_rules.get_int("DataVersion"),
             Some(MAXIMUM_SUPPORTED_WORLD_DATA_VERSION)
         );
     }

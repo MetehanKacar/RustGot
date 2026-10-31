@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 /// Configuration for chunk storage format.
 ///
 /// Supports `Anvil` (`.mca`), `Linear` (`.linear`), and `Pump` (`.pump`).
-#[derive(Deserialize, Serialize, Clone, Default)]
+/// `RustGot` defaults to Anvil so worlds stay interchangeable with vanilla/Paper/Purpur.
+#[derive(Deserialize, Serialize, Clone)]
 #[serde(tag = "type")]
 pub enum ChunkConfig {
     /// Standard Anvil chunk storage.
@@ -16,8 +17,13 @@ pub enum ChunkConfig {
     Linear,
     /// Pumpkin's own optimized world format.
     #[serde(rename = "pump")]
-    #[default]
     Pump,
+}
+
+impl Default for ChunkConfig {
+    fn default() -> Self {
+        Self::Anvil(AnvilChunkConfig::default())
+    }
 }
 
 /// Configuration for Anvil chunk storage.
@@ -39,8 +45,9 @@ pub struct ChunkCompression {
 
 impl Default for ChunkCompression {
     fn default() -> Self {
+        // Vanilla's default (`region-file-compression=deflate`), readable by every tool.
         Self {
-            algorithm: Compression::LZ4,
+            algorithm: Compression::ZLib,
             level: 6,
         }
     }

@@ -358,7 +358,6 @@ pub fn write_world_gen_settings(
     let path = dir.join("world_gen_settings.dat");
     let file = File::create(&path)?;
     let mut inner = NbtCompound::new();
-    inner.put_int("DataVersion", data_version);
     inner.put_long("seed", settings.seed);
     inner.put_bool("generate_structures", true);
     inner.put_bool("bonus_chest", false);
@@ -402,7 +401,9 @@ pub fn write_world_gen_settings(
     }
     inner.put_compound("dimensions", dims_comp);
 
+    // Vanilla saved data keeps DataVersion next to `data`, not inside it.
     let mut root = NbtCompound::new();
+    root.put_int("DataVersion", data_version);
     root.put_compound("data", inner);
     pumpkin_nbt::nbt_compress::write_gzip_compound_tag(root, BufWriter::new(file))
         .map_err(|e| WorldInfoError::SerializationError(e.to_string()))
@@ -418,9 +419,10 @@ pub fn game_rules_to_nbt(rules: &GameRuleRegistry, data_version: i32) -> NbtComp
             GameRuleValue::Int(i) => inner.put(&key, NbtTag::Int(*i as i32)),
         }
     }
-    inner.put_int("DataVersion", data_version);
 
+    // Every key inside `data` is a game rule id, so DataVersion must live next to it.
     let mut root = NbtCompound::new();
+    root.put_int("DataVersion", data_version);
     root.put_compound("data", inner);
     root
 }
@@ -516,7 +518,11 @@ fn world_clocks_from_nbt(root: &NbtCompound) -> WorldClocksData {
         return result;
     };
 
-    result.data_version = inner.get_int("DataVersion").unwrap_or(0);
+    // Vanilla keeps DataVersion next to `data`; older Pumpkin builds wrote it inside.
+    result.data_version = root
+        .get_int("DataVersion")
+        .or_else(|| inner.get_int("DataVersion"))
+        .unwrap_or(0);
 
     for (key, tag) in &inner.child_tags {
         if key.as_ref() == "DataVersion" {
@@ -546,9 +552,10 @@ pub fn write_world_clocks(
         dim_compound.put_long("total_ticks", clock.total_ticks);
         inner.put_compound(dim_name, dim_compound);
     }
-    inner.put_int("DataVersion", clocks.data_version);
 
+    // Every key inside `data` is a clock id, so DataVersion must live next to it.
     let mut root = NbtCompound::new();
+    root.put_int("DataVersion", clocks.data_version);
     root.put_compound("data", inner);
 
     let file = File::create(&path)?;
@@ -709,4 +716,62 @@ pub fn write_stopwatches_stub(
     let file = File::create(&path)?;
     pumpkin_nbt::nbt_compress::write_gzip_compound_tag(root, file)
         .map_err(|e| WorldInfoError::SerializationError(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read_raw(level_folder: &Path, file: &str) -> NbtCompound {
+        let path = minecraft_data_dir(level_folder).join(file);
+        read_gzip_compound_tag(File::open(path).expect("file written")).expect("valid NBT")
+    }
+
+    #[test]
+    fn world_clocks_keep_data_version_next_to_data() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut clocks = WorldClocksData {
+            data_version: 5023,
+            ..Default::default()
+        };
+        clocks
+            .clocks
+            .insert("minecraft:overworld".to_string(), DimensionClock { total_ticks: 42 });
+        write_world_clocks(dir.path(), &clocks).expect("write");
+
+        // Vanilla reads every key inside `data` as a clock id.
+        let raw = read_raw(dir.path(), "world_clocks.dat");
+        assert_eq!(raw.get_int("DataVersion"), Some(5023));
+        let data = raw.get_compound("data").expect("data");
+        assert!(data.get_int("DataVersion").is_none());
+
+        assert_eq!(read_world_clocks(dir.path()), clocks);
+    }
+
+    #[test]
+    fn world_clocks_read_old_pumpkin_layout() {
+        let mut inner = NbtCompound::new();
+        let mut overworld = NbtCompound::new();
+        overworld.put_long("total_ticks", 7);
+        inner.put_compound("minecraft:overworld", overworld);
+        inner.put_int("DataVersion", 4000);
+        let mut root = NbtCompound::new();
+        root.put_compound("data", inner);
+
+        let clocks = world_clocks_from_nbt(&root);
+        assert_eq!(clocks.data_version, 4000);
+        assert_eq!(clocks.clocks.len(), 1);
+    }
+
+    #[test]
+    fn game_rules_keep_data_version_next_to_data() {
+        let root = game_rules_to_nbt(&GameRuleRegistry::default(), 5023);
+        assert_eq!(root.get_int("DataVersion"), Some(5023));
+        assert!(
+            root.get_compound("data")
+                .expect("data")
+                .get_int("DataVersion")
+                .is_none()
+        );
+    }
 }
