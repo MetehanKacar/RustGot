@@ -256,28 +256,16 @@ async fn main() {
 fn print_support_links_and_warning() {
     warn!(
         "{}",
-        TextComponent::text("Pumpkin is currently under heavy development!")
+        TextComponent::text("RustGot is in early development!")
             .color_named(NamedColor::DarkRed)
             .to_pretty_console(),
     );
     info!(
-        "Report issues on {}",
-        TextComponent::text("https://github.com/Pumpkin-MC/Pumpkin/issues")
-            .color_named(NamedColor::DarkAqua)
-            .to_pretty_console()
-    );
-    info!(
-        "Join our {} for community support: {}",
-        TextComponent::text("Discord")
-            .color_named(NamedColor::DarkBlue)
+        "RustGot is based on {}; consider {} to {}",
+        TextComponent::text("Pumpkin")
+            .color_named(NamedColor::Gold)
             .to_pretty_console(),
-        TextComponent::text("https://discord.gg/wT8XjrjKkf")
-            .color_named(NamedColor::Aqua)
-            .to_pretty_console()
-    );
-    info!(
-        "Consider {} to {}",
-        TextComponent::text("Donating")
+        TextComponent::text("donating")
             .color_named(NamedColor::DarkPurple)
             .to_pretty_console(),
         TextComponent::text("https://pumpkinmc.org/donate/")

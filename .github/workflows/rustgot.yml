@@ -29,7 +29,7 @@ jobs:
           submodules: recursive
       - run: rustup update stable && rustup default stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy -p rustgot-config -p pumpkin --all-targets
+      - run: cargo clippy -p rustgot-config -p rustgot-loadbot -p pumpkin --all-targets
       - run: cargo test -p rustgot-config
       - run: cargo build --release --bin rustgot
       - uses: actions/upload-artifact@v4

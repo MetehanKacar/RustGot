@@ -1,0 +1,18 @@
+[package]
+name = "rustgot-loadbot"
+description = "Headless bot swarm that puts player load on a server for RustGot benchmarks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+pumpkin-data.workspace = true
+pumpkin-protocol.workspace = true
+pumpkin-util.workspace = true
+tokio = { workspace = true, features = ["full"] }
+uuid.workspace = true
+
+[lints]
+workspace = true

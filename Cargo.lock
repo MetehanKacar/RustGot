@@ -4154,6 +4154,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustgot-loadbot"
+version = "0.2.1+26.3-26.60"
+dependencies = [
+ "bytes",
+ "pumpkin-data",
+ "pumpkin-protocol",
+ "pumpkin-util",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "rusticata-macros"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
