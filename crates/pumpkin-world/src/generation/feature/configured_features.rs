@@ -58,6 +58,7 @@ use super::features::{
     replace_single_block::ReplaceSingleBlockFeature,
     root_system::RootSystemFeature,
     sequence::SequenceFeature,
+    template::TemplateFeature,
     scattered_ore::ScatteredOreFeature,
     sculk_patch::SculkPatchFeature,
     sea_pickle::SeaPickleFeature,
@@ -124,6 +125,7 @@ pub enum ConfiguredFeature {
     WaterloggedVegetationPatch(WaterloggedVegetationPatchFeature),
     RootSystem(RootSystemFeature),
     Sequence(SequenceFeature),
+    Template(TemplateFeature),
     MultifaceGrowth(MultifaceGrowthFeature),
     UnderwaterMagma(UnderwaterMagmaFeature),
     MonsterRoom(DungeonFeature),
@@ -451,6 +453,7 @@ impl ConfiguredFeature {
                 random,
                 pos,
             ),
+            Self::Template(feature) => feature.generate(chunk, random, pos),
             Self::BonusChest(_feature) => {
                 BonusChestFeature::generate(chunk, min_y, height, feature_name, random, pos)
             }

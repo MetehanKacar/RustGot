@@ -1184,7 +1184,59 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
             }
         }
         "minecraft:template" => {
-            quote! { ConfiguredFeature::NoOp }
+            let templates = config["templates"]
+                .as_array()
+                .expect("template feature needs templates")
+                .iter()
+                .map(|entry| {
+                    let data = &entry["data"];
+                    let id = data["id"].as_str().expect("template id");
+                    let id = id.strip_prefix("minecraft:").unwrap_or(id);
+                    let weight = entry["weight"].as_i64().unwrap_or(1) as i32;
+                    let rotation_names: Vec<&str> = data["rotations"].as_array().map_or_else(
+                        || vec!["none", "clockwise_90", "180", "counterclockwise_90"],
+                        |list| list.iter().filter_map(Value::as_str).collect(),
+                    );
+                    let rotations = rotation_names.iter().map(|name| match *name {
+                        "none" => quote! { pumpkin_data::Rotation::None },
+                        "clockwise_90" => quote! { pumpkin_data::Rotation::Clockwise90 },
+                        "180" => quote! { pumpkin_data::Rotation::Rotate180 },
+                        "counterclockwise_90" => {
+                            quote! { pumpkin_data::Rotation::CounterClockwise90 }
+                        }
+                        other => panic!("unknown template rotation {other}"),
+                    });
+                    quote! {
+                        crate::generation::feature::features::template::TemplateEntry {
+                            template: #id,
+                            rotations: &[#(#rotations),*],
+                            weight: #weight,
+                        }
+                    }
+                });
+            let processors = match &config["processors"] {
+                Value::Null => {
+                    quote! { crate::generation::feature::features::template::TemplateProcessors::None }
+                }
+                Value::String(name) => quote! {
+                    crate::generation::feature::features::template::TemplateProcessors::Named(#name)
+                },
+                inline => {
+                    let json = inline.to_string();
+                    quote! {
+                        crate::generation::feature::features::template::TemplateProcessors::Inline {
+                            json: #json,
+                            parsed: std::sync::OnceLock::new(),
+                        }
+                    }
+                }
+            };
+            quote! {
+                ConfiguredFeature::Template(crate::generation::feature::features::template::TemplateFeature {
+                    templates: vec![#(#templates),*],
+                    processors: #processors,
+                })
+            }
         }
         other => {
             let msg = format!("unknown configured feature type: {other}");
