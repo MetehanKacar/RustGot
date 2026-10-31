@@ -22,7 +22,7 @@ impl LargeDripstoneFeature {
 
         for i in 0..height {
             let target = BlockPos::new(current_pos.0.x, current_pos.0.y + i, current_pos.0.z);
-            if super::gen_dripstone(chunk, target) {
+            if super::gen_dripstone(chunk, target, &super::SpeleothemBlocks::DRIPSTONE) {
                 generated = true;
             }
         }

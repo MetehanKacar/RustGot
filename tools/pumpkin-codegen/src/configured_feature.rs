@@ -532,6 +532,7 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
             quote! { ConfiguredFeature::Tree(Box::new(#tree)) }
         }
         "minecraft:pointed_dripstone" | "minecraft:speleothem" => {
+            let blocks = value_to_speleothem_blocks(config);
             let taller = config["chance_of_taller_dripstone"].as_f64().unwrap_or(0.2) as f32;
             let dir_spread = config["chance_of_directional_spread"]
                 .as_f64()
@@ -540,6 +541,7 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
             let r3 = config["chance_of_spread_radius3"].as_f64().unwrap_or(0.5) as f32;
             quote! {
                 ConfiguredFeature::PointedDripstone(SmallDripstoneFeature {
+                    blocks: #blocks,
                     taller_dripstone: #taller,
                     directional_spread: #dir_spread,
                     spread_radius2: #r2,
@@ -1009,7 +1011,14 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
             quote! { ConfiguredFeature::BonusChest(crate::generation::feature::features::bonus_chest::BonusChestFeature {}) }
         }
         "minecraft:dripstone_cluster" | "minecraft:speleothem_cluster" => {
-            quote! { ConfiguredFeature::DripstoneCluster(crate::generation::feature::features::drip_stone::cluster::DripstoneClusterFeature {}) }
+            let blocks = value_to_speleothem_blocks(config);
+            quote! {
+                ConfiguredFeature::DripstoneCluster(
+                    crate::generation::feature::features::drip_stone::cluster::DripstoneClusterFeature {
+                        blocks: #blocks,
+                    }
+                )
+            }
         }
         "minecraft:sequence" => {
             let features = config["features"]
@@ -1241,6 +1250,30 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
         other => {
             let msg = format!("unknown configured feature type: {other}");
             quote! { compile_error!(#msg) }
+        }
+    }
+}
+
+/// `base_block`, `pointed_block` and `replaceable_blocks` of a 26.x speleothem feature; older
+/// dripstone configs without them fall back to dripstone.
+fn value_to_speleothem_blocks(config: &Value) -> TokenStream {
+    let block_ident = |key: &str, default: &str| {
+        let name = config[key].as_str().unwrap_or(default);
+        let name = name.strip_prefix("minecraft:").unwrap_or(name);
+        quote::format_ident!("{}", name.to_uppercase())
+    };
+    let base = block_ident("base_block", "dripstone_block");
+    let pointed = block_ident("pointed_block", "pointed_dripstone");
+    let tag = config["replaceable_blocks"]
+        .as_str()
+        .unwrap_or("#minecraft:dripstone_replaceable_blocks");
+    let tag = tag.strip_prefix('#').expect("replaceable_blocks must be a tag");
+    let tag = quote::format_ident!("{}", tag.to_uppercase().replace([':', '-', '/'], "_"));
+    quote! {
+        crate::generation::feature::features::drip_stone::SpeleothemBlocks {
+            base: &pumpkin_data::Block::#base,
+            pointed: &pumpkin_data::Block::#pointed,
+            replaceable: pumpkin_data::tag::Block::#tag,
         }
     }
 }

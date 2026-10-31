@@ -1,12 +1,12 @@
-use pumpkin_data::Block;
 use pumpkin_util::math::position::BlockPos;
 
 use crate::generation::proto_chunk::GenerationCache;
 
-pub struct DripstoneClusterFeature;
+pub struct DripstoneClusterFeature {
+    pub blocks: super::SpeleothemBlocks,
+}
 
 impl DripstoneClusterFeature {
-    #[allow(clippy::unused_self)]
     pub fn generate<T: GenerationCache>(&self, chunk: &mut T, pos: BlockPos) -> bool {
         let mut generated = false;
         let radius = 3;
@@ -20,14 +20,11 @@ impl DripstoneClusterFeature {
                     {
                         current_pos = current_pos.down();
                     }
-                    if super::gen_dripstone(chunk, current_pos) {
+                    if super::gen_dripstone(chunk, current_pos, &self.blocks) {
                         generated = true;
                         let drip_pos = current_pos.up();
                         if chunk.is_air(&drip_pos.0) {
-                            chunk.set_block_state(
-                                &drip_pos.0,
-                                Block::POINTED_DRIPSTONE.default_state,
-                            );
+                            chunk.set_block_state(&drip_pos.0, self.blocks.pointed.default_state);
                         }
                     }
                 }

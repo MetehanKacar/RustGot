@@ -6,6 +6,7 @@ use pumpkin_util::{
 };
 
 pub struct SmallDripstoneFeature {
+    pub blocks: super::SpeleothemBlocks,
     pub taller_dripstone: f32,
     pub directional_spread: f32,
     pub spread_radius2: f32,
@@ -19,7 +20,7 @@ impl SmallDripstoneFeature {
         random: &mut RandomGenerator,
         pos: BlockPos,
     ) -> bool {
-        if let Some(dir) = Self::get_direction(chunk, pos, random) {
+        if let Some(dir) = self.get_direction(chunk, pos, random) {
             let root_pos = pos.offset(dir.opposite().to_offset());
             self.gen_dripstone_blocks(chunk, root_pos, random);
             let next_pos = pos.offset(dir.to_offset());
@@ -30,20 +31,24 @@ impl SmallDripstoneFeature {
             } else {
                 1
             };
-            super::grow_pointed_dripstone(chunk, pos, dir, height, false);
+            super::grow_pointed_dripstone(chunk, pos, dir, height, false, &self.blocks);
             return true;
         }
         false
     }
 
     fn get_direction<T: GenerationCache>(
+        &self,
         chunk: &T,
         pos: BlockPos,
         random: &mut RandomGenerator,
     ) -> Option<BlockDirection> {
-        let up =
-            super::can_replace(GenerationCache::get_block_state(chunk, &pos.up().0).to_block_id());
+        let up = super::can_replace(
+            &self.blocks,
+            GenerationCache::get_block_state(chunk, &pos.up().0).to_block_id(),
+        );
         let down: bool = super::can_replace(
+            &self.blocks,
             GenerationCache::get_block_state(chunk, &pos.down().0).to_block_id(),
         );
         if up && down {
@@ -68,23 +73,23 @@ impl SmallDripstoneFeature {
         pos: BlockPos,
         random: &mut RandomGenerator,
     ) {
-        super::gen_dripstone(chunk, pos);
+        super::gen_dripstone(chunk, pos, &self.blocks);
         for dir in BlockDirection::horizontal_worldgen() {
             if random.next_f32() > self.directional_spread {
                 continue;
             }
             let pos = pos.offset(dir.to_offset());
-            super::gen_dripstone(chunk, pos);
+            super::gen_dripstone(chunk, pos, &self.blocks);
             if random.next_f32() > self.spread_radius2 {
                 continue;
             }
             let pos = pos.offset(BlockDirection::random(random).to_offset());
-            super::gen_dripstone(chunk, pos);
+            super::gen_dripstone(chunk, pos, &self.blocks);
             if random.next_f32() > self.spread_radius3 {
                 continue;
             }
             let pos = pos.offset(BlockDirection::random(random).to_offset());
-            super::gen_dripstone(chunk, pos);
+            super::gen_dripstone(chunk, pos, &self.blocks);
         }
     }
 }
