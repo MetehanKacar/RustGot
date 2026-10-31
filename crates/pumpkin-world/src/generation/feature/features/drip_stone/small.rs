@@ -31,7 +31,7 @@ impl SmallDripstoneFeature {
             } else {
                 1
             };
-            super::grow_pointed_dripstone(chunk, pos, dir, height, false, &self.blocks);
+            super::grow_speleothem(chunk, pos, dir, height, false, &self.blocks);
             return true;
         }
         false
@@ -43,11 +43,11 @@ impl SmallDripstoneFeature {
         pos: BlockPos,
         random: &mut RandomGenerator,
     ) -> Option<BlockDirection> {
-        let up = super::can_replace(
+        let up = super::is_base(
             &self.blocks,
             GenerationCache::get_block_state(chunk, &pos.up().0).to_block_id(),
         );
-        let down: bool = super::can_replace(
+        let down: bool = super::is_base(
             &self.blocks,
             GenerationCache::get_block_state(chunk, &pos.down().0).to_block_id(),
         );
@@ -73,23 +73,23 @@ impl SmallDripstoneFeature {
         pos: BlockPos,
         random: &mut RandomGenerator,
     ) {
-        super::gen_dripstone(chunk, pos, &self.blocks);
+        super::place_base_block_if_possible(chunk, pos, &self.blocks);
         for dir in BlockDirection::horizontal_worldgen() {
             if random.next_f32() > self.directional_spread {
                 continue;
             }
             let pos = pos.offset(dir.to_offset());
-            super::gen_dripstone(chunk, pos, &self.blocks);
+            super::place_base_block_if_possible(chunk, pos, &self.blocks);
             if random.next_f32() > self.spread_radius2 {
                 continue;
             }
             let pos = pos.offset(BlockDirection::random(random).to_offset());
-            super::gen_dripstone(chunk, pos, &self.blocks);
+            super::place_base_block_if_possible(chunk, pos, &self.blocks);
             if random.next_f32() > self.spread_radius3 {
                 continue;
             }
             let pos = pos.offset(BlockDirection::random(random).to_offset());
-            super::gen_dripstone(chunk, pos, &self.blocks);
+            super::place_base_block_if_possible(chunk, pos, &self.blocks);
         }
     }
 }

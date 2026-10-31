@@ -126,6 +126,10 @@ pub fn build() -> TokenStream {
                 ConstantIntProvider, IntProvider, NormalIntProvider, UniformIntProvider,
                 WeightedEntry, WeightedListIntProvider,
             };
+            use pumpkin_util::math::float_provider::{
+                ClampedNormalFloatProvider, ConstantFloatProvider, FloatProvider,
+                NormalFloatProvider, TrapezoidFloatProvider, UniformFloatProvider,
+            };
             use crate::block::BlockStateCodec;
             use crate::generation::block_state_provider::{
                 BlockStateProvider, BlockStateRule, DualNoiseBlockStateProvider,
@@ -1012,10 +1016,36 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
         }
         "minecraft:dripstone_cluster" | "minecraft:speleothem_cluster" => {
             let blocks = value_to_speleothem_blocks(config);
+            let int = |key: &str| config[key].as_i64().unwrap_or_else(|| panic!("{key}")) as i32;
+            let float = |key: &str| config[key].as_f64().unwrap_or_else(|| panic!("{key}")) as f32;
+            let float_provider =
+                |key: &str| crate::carver::value_to_float_provider(&config[key]);
+            let floor_to_ceiling_search_range = int("floor_to_ceiling_search_range");
+            let height = value_to_int_provider(&config["height"]);
+            let radius = value_to_int_provider(&config["radius"]);
+            let max_height_diff = int("max_stalagmite_stalactite_height_diff");
+            let height_deviation = int("height_deviation");
+            let layer_thickness = value_to_int_provider(&config["speleothem_block_layer_thickness"]);
+            let density = float_provider("density");
+            let wetness = float_provider("wetness");
+            let chance_at_max_distance = float("chance_of_speleothem_at_max_distance_from_center");
+            let max_distance_from_edge = int("max_distance_from_edge_affecting_chance_of_speleothem");
+            let max_distance_from_center = int("max_distance_from_center_affecting_height_bias");
             quote! {
                 ConfiguredFeature::DripstoneCluster(
                     crate::generation::feature::features::drip_stone::cluster::DripstoneClusterFeature {
                         blocks: #blocks,
+                        floor_to_ceiling_search_range: #floor_to_ceiling_search_range,
+                        height: #height,
+                        radius: #radius,
+                        max_stalagmite_stalactite_height_diff: #max_height_diff,
+                        height_deviation: #height_deviation,
+                        speleothem_block_layer_thickness: #layer_thickness,
+                        density: #density,
+                        wetness: #wetness,
+                        chance_of_speleothem_at_max_distance_from_center: #chance_at_max_distance,
+                        max_distance_from_edge_affecting_chance_of_speleothem: #max_distance_from_edge,
+                        max_distance_from_center_affecting_height_bias: #max_distance_from_center,
                     }
                 )
             }

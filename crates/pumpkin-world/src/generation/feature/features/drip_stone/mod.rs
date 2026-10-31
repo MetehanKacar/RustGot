@@ -1,8 +1,14 @@
+//! Speleothem features (vanilla `SpeleothemUtils` and friends).
+//!
+//! 26.x generalised dripstone: the same features build sulfur spikes in sulfur caves,
+//! configured by `base_block`, `pointed_block` and `replaceable_blocks`.
+
 use crate::generation::proto_chunk::GenerationCache;
 use pumpkin_data::block_properties::{
     PointedDripstoneLikeProperties, SpeleothemThickness, VerticalDirection,
 };
 use pumpkin_data::tag;
+use pumpkin_data::tag::Taggable;
 use pumpkin_data::{Block, BlockDirection, BlockId, BlockState};
 use pumpkin_util::math::position::BlockPos;
 
@@ -10,9 +16,7 @@ pub mod cluster;
 pub mod large;
 pub mod small;
 
-/// The blocks a speleothem feature builds with. 26.x generalised dripstone: the same features
-/// make sulfur spikes in sulfur caves, configured by `base_block`, `pointed_block` and
-/// `replaceable_blocks`.
+/// The blocks a speleothem feature builds with.
 pub struct SpeleothemBlocks {
     pub base: &'static Block,
     pub pointed: &'static Block,
@@ -27,11 +31,13 @@ impl SpeleothemBlocks {
     };
 }
 
-pub(super) fn can_replace(blocks: &SpeleothemBlocks, id: BlockId) -> bool {
+/// Vanilla `SpeleothemUtils.isBase`.
+pub(super) fn is_base(blocks: &SpeleothemBlocks, id: BlockId) -> bool {
     id == blocks.base.id || id.has_tag(blocks.replaceable)
 }
 
-pub(super) fn gen_dripstone<T: GenerationCache>(
+/// Vanilla `SpeleothemUtils.placeBaseBlockIfPossible`.
+pub(super) fn place_base_block_if_possible<T: GenerationCache>(
     chunk: &mut T,
     pos: BlockPos,
     blocks: &SpeleothemBlocks,
@@ -44,6 +50,7 @@ pub(super) fn gen_dripstone<T: GenerationCache>(
     false
 }
 
+/// Vanilla `SpeleothemUtils.isEmptyOrWater`.
 pub(super) fn is_empty_or_water<T: GenerationCache>(chunk: &T, pos: BlockPos) -> bool {
     let block = GenerationCache::get_block_state(chunk, &pos.0).to_block_id();
     block == BlockId::AIR
@@ -52,7 +59,9 @@ pub(super) fn is_empty_or_water<T: GenerationCache>(chunk: &T, pos: BlockPos) ->
         || block == BlockId::WATER
 }
 
-pub(super) fn grow_pointed_dripstone<T: GenerationCache>(
+/// Vanilla `SpeleothemUtils.growSpeleothem`: builds base-to-tip from `start_pos` towards
+/// `tip_direction`, but only if the block behind the start can hold it.
+pub(super) fn grow_speleothem<T: GenerationCache>(
     chunk: &mut T,
     start_pos: BlockPos,
     tip_direction: BlockDirection,
@@ -60,13 +69,19 @@ pub(super) fn grow_pointed_dripstone<T: GenerationCache>(
     merged_tip: bool,
     blocks: &SpeleothemBlocks,
 ) {
-    let mut cur = start_pos;
-    let vert_dir = match tip_direction {
+    let behind = start_pos.offset(tip_direction.opposite().to_offset());
+    if !is_base(
+        blocks,
+        GenerationCache::get_block_state(chunk, &behind.0).to_block_id(),
+    ) {
+        return;
+    }
+
+    let vertical_direction = match tip_direction {
         BlockDirection::Down => VerticalDirection::Down,
         _ => VerticalDirection::Up,
     };
-
-    let mut thicknesses = Vec::with_capacity(height as usize);
+    let mut thicknesses = Vec::with_capacity(usize::try_from(height).unwrap_or(0));
     if height >= 3 {
         thicknesses.push(SpeleothemThickness::Base);
         for _ in 0..(height - 3) {
@@ -84,15 +99,18 @@ pub(super) fn grow_pointed_dripstone<T: GenerationCache>(
         });
     }
 
+    let mut pos = start_pos;
     for thickness in thicknesses {
-        let is_water =
-            GenerationCache::get_block_state(chunk, &cur.0).to_block_id() == BlockId::WATER;
+        let (fluid, _) = GenerationCache::get_fluid_and_fluid_state(chunk, &pos.0);
         let mut props = PointedDripstoneLikeProperties::default(blocks.pointed);
         props.thickness = thickness;
-        props.vertical_direction = vert_dir;
-        props.waterlogged = is_water;
-        let state_id = props.to_state_id(blocks.pointed);
-        chunk.set_block_state(&cur.0, BlockState::from_id(state_id));
-        cur = cur.offset(tip_direction.to_offset());
+        props.vertical_direction = vertical_direction;
+        // Vanilla `level.isWaterAt(pos)`.
+        props.waterlogged = fluid.has_tag(&tag::Fluid::MINECRAFT_WATER);
+        chunk.set_block_state(
+            &pos.0,
+            BlockState::from_id(props.to_state_id(blocks.pointed)),
+        );
+        pos = pos.offset(tip_direction.to_offset());
     }
 }

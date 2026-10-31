@@ -241,7 +241,7 @@ fn value_to_int_provider(v: &Value) -> TokenStream {
     }
 }
 
-fn value_to_float_provider(v: &Value) -> TokenStream {
+pub fn value_to_float_provider(v: &Value) -> TokenStream {
     if v.is_number() {
         let f = v.as_f64().unwrap_or(0.0) as f32;
         quote! { FloatProvider::Constant(#f) }
@@ -262,6 +262,13 @@ fn value_to_float_provider(v: &Value) -> TokenStream {
                 let max = v["max"].as_f64().unwrap_or(0.0) as f32;
                 let plateau = v["plateau"].as_f64().unwrap_or(0.0) as f32;
                 quote! { FloatProvider::Object(NormalFloatProvider::Trapezoid(TrapezoidFloatProvider::new(#min, #max, #plateau))) }
+            }
+            "minecraft:clamped_normal" => {
+                let mean = v["mean"].as_f64().unwrap_or(0.0) as f32;
+                let deviation = v["deviation"].as_f64().unwrap_or(0.0) as f32;
+                let min = v["min"].as_f64().unwrap_or(0.0) as f32;
+                let max = v["max"].as_f64().unwrap_or(0.0) as f32;
+                quote! { FloatProvider::Object(NormalFloatProvider::ClampedNormal(ClampedNormalFloatProvider::new(#mean, #deviation, #min, #max))) }
             }
             _ => {
                 quote! { FloatProvider::Constant(0.0) }

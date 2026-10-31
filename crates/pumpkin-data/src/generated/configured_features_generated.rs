@@ -99,6 +99,10 @@ fn build_configured_features()
     use pumpkin_data::{Block, BlockDirection};
     use pumpkin_util::DoublePerlinNoiseParametersCodec;
     use pumpkin_util::HeightMap;
+    use pumpkin_util::math::float_provider::{
+        ClampedNormalFloatProvider, ConstantFloatProvider, FloatProvider, NormalFloatProvider,
+        TrapezoidFloatProvider, UniformFloatProvider,
+    };
     use pumpkin_util::math::int_provider::{
         BiasedToBottomIntProvider, ClampedIntProvider, ClampedNormalIntProvider,
         ConstantIntProvider, IntProvider, NormalIntProvider, TrapezoidIntProvider,
@@ -1561,6 +1565,32 @@ fn build_configured_features()
                     pointed: &pumpkin_data::Block::POINTED_DRIPSTONE,
                     replaceable: pumpkin_data::tag::Block::MINECRAFT_DRIPSTONE_REPLACEABLE_BLOCKS,
                 },
+                floor_to_ceiling_search_range: 12i32,
+                height: IntProvider::Object(NormalIntProvider::Uniform(UniformIntProvider {
+                    min_inclusive: 3i32,
+                    max_inclusive: 6i32,
+                })),
+                radius: IntProvider::Object(NormalIntProvider::Uniform(UniformIntProvider {
+                    min_inclusive: 2i32,
+                    max_inclusive: 8i32,
+                })),
+                max_stalagmite_stalactite_height_diff: 1i32,
+                height_deviation: 3i32,
+                speleothem_block_layer_thickness: IntProvider::Object(NormalIntProvider::Uniform(
+                    UniformIntProvider {
+                        min_inclusive: 2i32,
+                        max_inclusive: 4i32,
+                    },
+                )),
+                density: FloatProvider::Object(NormalFloatProvider::Uniform(
+                    UniformFloatProvider::new(0.3f32, 0.7f32),
+                )),
+                wetness: FloatProvider::Object(NormalFloatProvider::ClampedNormal(
+                    ClampedNormalFloatProvider::new(0.1f32, 0.3f32, 0.1f32, 0.9f32),
+                )),
+                chance_of_speleothem_at_max_distance_from_center: 0.1f32,
+                max_distance_from_edge_affecting_chance_of_speleothem: 3i32,
+                max_distance_from_center_affecting_height_bias: 8i32,
             },
         ),
     );
@@ -4192,6 +4222,30 @@ fn build_configured_features()
                     replaceable:
                         pumpkin_data::tag::Block::MINECRAFT_SULFUR_SPIKE_REPLACEABLE_BLOCKS,
                 },
+                floor_to_ceiling_search_range: 12i32,
+                height: IntProvider::Object(NormalIntProvider::Uniform(UniformIntProvider {
+                    min_inclusive: 1i32,
+                    max_inclusive: 4i32,
+                })),
+                radius: IntProvider::Object(NormalIntProvider::Uniform(UniformIntProvider {
+                    min_inclusive: 2i32,
+                    max_inclusive: 8i32,
+                })),
+                max_stalagmite_stalactite_height_diff: 1i32,
+                height_deviation: 3i32,
+                speleothem_block_layer_thickness: IntProvider::Object(NormalIntProvider::Uniform(
+                    UniformIntProvider {
+                        min_inclusive: 2i32,
+                        max_inclusive: 4i32,
+                    },
+                )),
+                density: FloatProvider::Object(NormalFloatProvider::Uniform(
+                    UniformFloatProvider::new(0.3f32, 0.7f32),
+                )),
+                wetness: FloatProvider::Constant(0f32),
+                chance_of_speleothem_at_max_distance_from_center: 0.1f32,
+                max_distance_from_edge_affecting_chance_of_speleothem: 3i32,
+                max_distance_from_center_affecting_height_bias: 8i32,
             },
         ),
     );
