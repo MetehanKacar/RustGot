@@ -812,10 +812,18 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
         "minecraft:lake" => {
             let fluid = value_to_block_state_provider(&config["fluid"]);
             let barrier = value_to_block_state_provider(&config["barrier"]);
+            let can_place_feature = value_to_block_predicate(&config["can_place_feature"]);
+            let can_replace_with_air_or_fluid =
+                value_to_block_predicate(&config["can_replace_with_air_or_fluid"]);
+            let can_replace_with_barrier =
+                value_to_block_predicate(&config["can_replace_with_barrier"]);
             quote! {
                 ConfiguredFeature::Lake(crate::generation::feature::features::lake::LakeFeature {
                     fluid: #fluid,
                     barrier: #barrier,
+                    can_place_feature: #can_place_feature,
+                    can_replace_with_air_or_fluid: #can_replace_with_air_or_fluid,
+                    can_replace_with_barrier: #can_replace_with_barrier,
                 })
             }
         }
@@ -1004,7 +1012,18 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
             quote! { ConfiguredFeature::DripstoneCluster(crate::generation::feature::features::drip_stone::cluster::DripstoneClusterFeature {}) }
         }
         "minecraft:sequence" => {
-            quote! { ConfiguredFeature::NoOp }
+            let features = config["features"]
+                .as_array()
+                .expect("sequence features must be an array")
+                .iter()
+                .map(value_to_inline_placed_feature);
+            quote! {
+                ConfiguredFeature::Sequence(
+                    crate::generation::feature::features::sequence::SequenceFeature {
+                        features: vec![#(#features),*],
+                    }
+                )
+            }
         }
         "minecraft:stepped_column_cluster" => {
             let block = value_to_block_state_provider(&config["block"]);
@@ -1046,8 +1065,6 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
             let spread_attempts = config["spread_attempts"].as_u64().unwrap() as i32;
             let growth_rounds = config["growth_rounds"].as_u64().unwrap() as i32;
             let spread_rounds = config["spread_rounds"].as_u64().unwrap() as i32;
-            let extra_rare_growths = value_to_int_provider(&config["extra_rare_growths"]);
-            let catalyst_chance = config["catalyst_chance"].as_f64().unwrap() as f32;
             quote! {
                 ConfiguredFeature::SculkPatch(crate::generation::feature::features::sculk_patch::SculkPatchFeature {
                     charge_count: #charge_count,
@@ -1055,8 +1072,6 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
                     spread_attempts: #spread_attempts,
                     growth_rounds: #growth_rounds,
                     spread_rounds: #spread_rounds,
-                    extra_rare_growths: #extra_rare_growths,
-                    catalyst_chance: #catalyst_chance,
                 })
             }
         }

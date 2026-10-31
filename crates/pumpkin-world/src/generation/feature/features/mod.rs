@@ -43,6 +43,7 @@ pub mod random_patch;
 pub mod random_selector;
 pub mod replace_single_block;
 pub mod root_system;
+pub mod sequence;
 pub mod scattered_ore;
 pub mod sculk;
 pub mod sculk_patch;

@@ -57,6 +57,7 @@ use super::features::{
     random_selector::RandomFeature,
     replace_single_block::ReplaceSingleBlockFeature,
     root_system::RootSystemFeature,
+    sequence::SequenceFeature,
     scattered_ore::ScatteredOreFeature,
     sculk_patch::SculkPatchFeature,
     sea_pickle::SeaPickleFeature,
@@ -122,6 +123,7 @@ pub enum ConfiguredFeature {
     VegetationPatch(VegetationPatchFeature),
     WaterloggedVegetationPatch(WaterloggedVegetationPatchFeature),
     RootSystem(RootSystemFeature),
+    Sequence(SequenceFeature),
     MultifaceGrowth(MultifaceGrowthFeature),
     UnderwaterMagma(UnderwaterMagmaFeature),
     MonsterRoom(DungeonFeature),
@@ -432,6 +434,15 @@ impl ConfiguredFeature {
             }
             Self::SculkPatch(feature) => feature.generate(block_registry, chunk, random, pos),
             Self::RootSystem(feature) => feature.generate(
+                chunk,
+                block_registry,
+                min_y,
+                height,
+                feature_name,
+                random,
+                pos,
+            ),
+            Self::Sequence(feature) => feature.generate(
                 chunk,
                 block_registry,
                 min_y,

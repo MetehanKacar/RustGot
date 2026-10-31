@@ -65,6 +65,11 @@ impl PlacedFeature {
         };
         if let ConfiguredFeature::SculkPatch(feature) = feature {
             feature.generate_in_proto_chunk(chunk, random, pos)
+        } else if let ConfiguredFeature::Sequence(sequence) = feature {
+            // Keep each step on the proto-chunk path (sculk patches spread past the chunk).
+            sequence.features.iter().all(|step| {
+                step.generate_in_proto_chunk(chunk, block_registry, feature_name, random, pos)
+            })
         } else {
             let min_y = chunk.generation_bottom_y();
             let height = chunk.generation_height();

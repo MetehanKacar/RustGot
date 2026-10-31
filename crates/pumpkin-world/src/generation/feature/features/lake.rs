@@ -1,15 +1,24 @@
-use pumpkin_data::{Block, BlockState, tag};
+use pumpkin_data::Block;
 use pumpkin_util::{
     math::position::BlockPos,
     random::{RandomGenerator, RandomImpl},
 };
 
-use crate::generation::{block_state_provider::BlockStateProvider, proto_chunk::GenerationCache};
+use crate::generation::{
+    block_predicate::BlockPredicate, block_state_provider::BlockStateProvider,
+    proto_chunk::GenerationCache,
+};
 use crate::world::WorldPortalExt;
 
 pub struct LakeFeature {
     pub fluid: BlockStateProvider,
     pub barrier: BlockStateProvider,
+    /// Every block bordering the lake must pass this (26.3; e.g. sulfur pools avoid spikes).
+    pub can_place_feature: BlockPredicate,
+    /// Blocks the lake may turn into air or fluid (was the `features_cannot_replace` tag).
+    pub can_replace_with_air_or_fluid: BlockPredicate,
+    /// Solid blocks the barrier may replace (was the `lava_pool_stone_cannot_replace` tag).
+    pub can_replace_with_barrier: BlockPredicate,
 }
 
 impl LakeFeature {
@@ -79,6 +88,13 @@ impl LakeFeature {
                         if yyx < 4 && !block_state.is_solid() && block_state != fluid_state {
                             return false;
                         }
+
+                        if !self
+                            .can_place_feature
+                            .test(block_registry, chunk, &check_pos)
+                        {
+                            return false;
+                        }
                     }
                 }
             }
@@ -91,9 +107,10 @@ impl LakeFeature {
                 for yyx in 0..8 {
                     if grid[(xx * 16 + zz) * 8 + yyx] {
                         let place_pos = origin.add(xx as i32, yyx as i32, zz as i32);
-                        let current_state =
-                            GenerationCache::get_block_state(chunk, &place_pos.0).to_state();
-                        if Self::can_replace_block(current_state) {
+                        if self
+                            .can_replace_with_air_or_fluid
+                            .test(block_registry, chunk, &place_pos)
+                        {
                             let place_air = yyx >= 4;
                             chunk.set_block_state(
                                 &place_pos.0,
@@ -125,10 +142,9 @@ impl LakeFeature {
                             let block_state =
                                 GenerationCache::get_block_state(chunk, &barrier_pos.0).to_state();
                             if block_state.is_solid()
-                                && !block_state
-                                    .id
-                                    .to_block_id()
-                                    .has_tag(tag::Block::MINECRAFT_LAVA_POOL_STONE_CANNOT_REPLACE)
+                                && self
+                                    .can_replace_with_barrier
+                                    .test(block_registry, chunk, &barrier_pos)
                             {
                                 chunk.set_block_state(&barrier_pos.0, barrier_state);
                             }
@@ -154,24 +170,16 @@ impl LakeFeature {
                         freeze_pos.0.z as f64,
                         63,
                     ) < 0.15
+                        && self
+                            .can_replace_with_air_or_fluid
+                            .test(block_registry, chunk, &freeze_pos)
                     {
-                        let current_state =
-                            GenerationCache::get_block_state(chunk, &freeze_pos.0).to_state();
-                        if Self::can_replace_block(current_state) {
-                            chunk.set_block_state(&freeze_pos.0, Block::ICE.default_state);
-                        }
+                        chunk.set_block_state(&freeze_pos.0, Block::ICE.default_state);
                     }
                 }
             }
         }
 
         true
-    }
-
-    fn can_replace_block(state: &BlockState) -> bool {
-        !state
-            .id
-            .to_block_id()
-            .has_tag(tag::Block::MINECRAFT_FEATURES_CANNOT_REPLACE)
     }
 }
