@@ -1,7 +1,7 @@
 use crate::generation::structure::placement::GlobalStructureCache;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use pumpkin_data::block_properties::is_air;
+use pumpkin_data::block_properties::{BLOCK_ENTITY_TYPES, is_air};
 use pumpkin_data::chunk::DoublePerlinNoiseParameters;
 use pumpkin_data::fluid::{Fluid, FluidState};
 use pumpkin_data::structures::{
@@ -441,7 +441,12 @@ impl ProtoChunk {
         let Ok(local_y) = usize::try_from(y - i32::from(self.bottom_y())) else {
             return (0, 0);
         };
-        let (section, lx, ly, lz) = (local_y >> 4, (x & 15) as usize, (y & 15) as usize, (z & 15) as usize);
+        let (section, lx, ly, lz) = (
+            local_y >> 4,
+            (x & 15) as usize,
+            (y & 15) as usize,
+            (z & 15) as usize,
+        );
         (
             SkyLightProvider::get_light_proto(self, section, lx, ly, lz),
             BlockLightProvider::get_light_proto(self, section, lx, ly, lz),
@@ -463,7 +468,13 @@ impl ProtoChunk {
         self.generation_bottom_y
     }
 
+    /// Sets the pending block entity at the position in `nbt`, replacing any earlier one there
+    /// (vanilla `setBlockEntityNbt` is a map put).
     pub fn add_block_entity(&mut self, nbt: NbtCompound) {
+        if let (Some(x), Some(y), Some(z)) = (nbt.get_int("x"), nbt.get_int("y"), nbt.get_int("z"))
+        {
+            self.remove_block_entity(x, y, z);
+        }
         self.pending_block_entities.push(nbt);
     }
 
@@ -785,11 +796,25 @@ impl ProtoChunk {
         // that has none (or a different block) drops the block entity, so a later structure
         // overwriting e.g. a jigsaw does not leave a stale jigsaw block entity behind.
         let old = old_state.to_state();
+        let same_block = old_state.to_block_id() == block_state.id.to_block_id();
         if old.block_entity_type != u16::MAX
-            && (block_state.block_entity_type == u16::MAX
-                || old_state.to_block_id() != block_state.id.to_block_id())
+            && (block_state.block_entity_type == u16::MAX || !same_block)
         {
             self.remove_block_entity(x, y, z);
+        }
+        // Vanilla adds a placeholder that becomes the block's default block entity when the
+        // chunk is finished; without it, blocks placed by features (sculk sensors, potent
+        // sulfur, ...) had no block entity. Callers with real data (templates) add it after.
+        if block_state.block_entity_type != u16::MAX
+            && !same_block
+            && let Some(id) = BLOCK_ENTITY_TYPES.get(usize::from(block_state.block_entity_type))
+        {
+            let mut nbt = NbtCompound::new();
+            nbt.put_string("id", format!("minecraft:{id}"));
+            nbt.put_int("x", x);
+            nbt.put_int("y", y);
+            nbt.put_int("z", z);
+            self.add_block_entity(nbt);
         }
 
         let hm_index = Self::local_position_to_height_map_index(local_x, local_z);
@@ -2072,5 +2097,34 @@ mod block_entity_tests {
             .map(|nbt| nbt.get_int("x"))
             .collect();
         assert_eq!(left, [Some(4)]);
+    }
+
+    #[test]
+    fn placing_a_block_entity_block_adds_its_default_block_entity() {
+        let world_gen = WorldGenerator::Noise(Box::new(VanillaGenerator::new(
+            Seed(42),
+            Dimension::OVERWORLD,
+        )));
+        let mut chunk = ProtoChunk::new(0, 0, &world_gen);
+        // A feature places a sculk sensor with no data of its own.
+        chunk.set_block_state(1, 20, 2, Block::SCULK_SENSOR.default_state);
+        // A template places a jigsaw and then sets its real data.
+        chunk.set_block_state(3, 20, 2, Block::JIGSAW.default_state);
+        let mut jigsaw = jigsaw_nbt(3, 20, 2);
+        jigsaw.put_string("final_state", "minecraft:stone".to_string());
+        chunk.add_block_entity(jigsaw);
+
+        let pending = chunk.take_pending_block_entities();
+        assert_eq!(pending.len(), 2);
+        let sensor = pending
+            .iter()
+            .find(|nbt| nbt.get_int("x") == Some(1))
+            .expect("sensor");
+        assert_eq!(sensor.get_string("id"), Some("minecraft:sculk_sensor"));
+        let jigsaw = pending
+            .iter()
+            .find(|nbt| nbt.get_int("x") == Some(3))
+            .expect("jigsaw");
+        assert_eq!(jigsaw.get_string("final_state"), Some("minecraft:stone"));
     }
 }
