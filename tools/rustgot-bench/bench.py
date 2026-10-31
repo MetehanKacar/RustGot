@@ -1,4 +1,4 @@
-"""Memory benchmark: run a server, wait until it is ready, and sample its RSS.
+"""Server benchmark: run a server, wait until it is ready, and sample memory, CPU and MSPT.
 
 Runs the same way for RustGot and Purpur so the two can be compared on the same world:
 
@@ -12,6 +12,10 @@ With `--bots N`, `rustgot-loadbot` (build it with `cargo build --release -p rust
 joins N offline-mode bots that fly outward and load fresh chunks; sampling starts after
 `--warmup` seconds. Servers must run with online mode off, and Paper/Purpur also need
 `allow-flight=true`.
+
+MSPT is read from the server's own console command every 5 seconds: `tps` on RustGot (average
+of the last 100 ticks) and `mspt` on Paper/Purpur (5 second average and max). Both count only
+the time spent ticking, not the sleep between ticks. CPU is the whole process tree, in cores.
 """
 
 import argparse
@@ -28,22 +32,50 @@ import psutil
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LOADBOT = REPO_ROOT / "target" / "release" / ("rustgot-loadbot.exe" if sys.platform == "win32" else "rustgot-loadbot")
 
+# Ready line -> server kind, which decides how MSPT is read.
 READY_PATTERNS = [
-    re.compile(r"Started server; took"),  # RustGot / Pumpkin
-    re.compile(r"Done \([\d.,]+s\)!"),  # Paper / Purpur / vanilla
+    (re.compile(r"Started server; took"), "rustgot"),  # RustGot / Pumpkin
+    (re.compile(r"Done \([\d.,]+s\)!"), "paper"),  # Paper / Purpur / vanilla
 ]
+MSPT_COMMANDS = {"rustgot": "tps", "paper": "mspt"}
+NUMBER = r"(\d+(?:[.,]\d+)?)"  # Paper prints numbers in the system locale (e.g. "0,5")
+RUSTGOT_MSPT = re.compile(rf"MSPT: {NUMBER}ms")
+PAPER_MSPT = re.compile(rf"{NUMBER}/{NUMBER}/{NUMBER}")  # first triple = last 5s avg/min/max
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 JOIN_PATTERN = re.compile(r"\b(bot\d+) joined the game")
 LEAVE_PATTERN = re.compile(r"\b(bot\d+) (?:left the game|lost connection)")
 
 
+def number(text: str) -> float:
+    return float(text.replace(",", "."))
+
+
+def tree(proc: psutil.Process) -> list[psutil.Process]:
+    try:
+        return [proc, *proc.children(recursive=True)]
+    except psutil.NoSuchProcess:
+        return []
+
+
 def tree_rss(proc: psutil.Process) -> int:
     """RSS of the process and all its children, in bytes."""
     total = 0
-    for p in [proc, *proc.children(recursive=True)]:
+    for p in tree(proc):
         try:
             total += p.memory_info().rss
+        except psutil.NoSuchProcess:
+            pass
+    return total
+
+
+def tree_cpu_seconds(proc: psutil.Process) -> float:
+    """User + system CPU time of the process and all its children."""
+    total = 0.0
+    for p in tree(proc):
+        try:
+            t = p.cpu_times()
+            total += t.user + t.system
         except psutil.NoSuchProcess:
             pass
     return total
@@ -54,13 +86,14 @@ def main() -> int:
     parser.add_argument("--name", required=True, help="label for the result, e.g. rustgot or purpur")
     parser.add_argument("--workdir", required=True, type=Path, help="server directory (world, configs)")
     parser.add_argument("--duration", type=float, default=60, help="seconds to sample after the server is ready")
-    parser.add_argument("--interval", type=float, default=1, help="seconds between samples")
+    parser.add_argument("--interval", type=float, default=1, help="seconds between memory samples")
     parser.add_argument("--timeout", type=float, default=300, help="max seconds to wait for startup")
     parser.add_argument("--bots", type=int, default=0, help="number of load bots to connect")
     parser.add_argument("--bot-fly-secs", type=int, default=60, help="seconds each bot flies outward")
     parser.add_argument("--warmup", type=float, default=0, help="seconds between starting bots and sampling")
     parser.add_argument("--addr", default="127.0.0.1:25565", help="server address for the bots")
     parser.add_argument("--loadbot", type=Path, default=DEFAULT_LOADBOT, help="path to rustgot-loadbot")
+    parser.add_argument("--mspt-interval", type=float, default=5, help="seconds between MSPT queries (0 = off)")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="server command, after --")
     args = parser.parse_args()
 
@@ -83,20 +116,33 @@ def main() -> int:
         errors="replace",
     )
     ready = threading.Event()
-    joined = set()
-    left = set()
+    kind: list[str] = []
+    joined: set[str] = set()
+    left: set[str] = set()
+    mspt_avg: list[float] = []
+    mspt_max: list[float] = []
+    collecting_mspt = threading.Event()
 
     def pump_output() -> None:
         assert server.stdout is not None
         for line in server.stdout:
             sys.stdout.write(f"[{args.name}] {line}")
             line = ANSI_ESCAPE.sub("", line)
-            if any(p.search(line) for p in READY_PATTERNS):
-                ready.set()
+            if not ready.is_set():
+                for pattern, server_kind in READY_PATTERNS:
+                    if pattern.search(line):
+                        kind.append(server_kind)
+                        ready.set()
             if m := JOIN_PATTERN.search(line):
                 joined.add(m.group(1))
             if m := LEAVE_PATTERN.search(line):
                 left.add(m.group(1))
+            if collecting_mspt.is_set():
+                if m := RUSTGOT_MSPT.search(line):
+                    mspt_avg.append(number(m.group(1)))
+                elif "TPS from" not in line and (m := PAPER_MSPT.search(line)):
+                    mspt_avg.append(number(m.group(1)))
+                    mspt_max.append(number(m.group(3)))
 
     threading.Thread(target=pump_output, daemon=True).start()
 
@@ -111,6 +157,15 @@ def main() -> int:
             return 1
     startup_s = time.monotonic() - start
 
+    assert server.stdin is not None
+
+    def send(console_command: str) -> None:
+        try:
+            server.stdin.write(console_command + "\n")
+            server.stdin.flush()
+        except OSError:
+            pass
+
     bots = None
     if args.bots > 0:
         bots = subprocess.Popen(
@@ -121,21 +176,28 @@ def main() -> int:
 
     proc = psutil.Process(server.pid)
     samples = []
+    cpu_start, wall_start = tree_cpu_seconds(proc), time.monotonic()
+    collecting_mspt.set()
+    next_mspt = time.monotonic() + args.mspt_interval
     end = time.monotonic() + args.duration
     while time.monotonic() < end and server.poll() is None:
         samples.append(tree_rss(proc))
+        if args.mspt_interval > 0 and time.monotonic() >= next_mspt:
+            send(MSPT_COMMANDS[kind[0]])
+            next_mspt += args.mspt_interval
         time.sleep(args.interval)
+    cpu_cores = (tree_cpu_seconds(proc) - cpu_start) / max(time.monotonic() - wall_start, 1e-9)
+    time.sleep(1)  # let the last MSPT reply arrive
+    collecting_mspt.clear()
 
     if bots is not None:
         bots.kill()
     bots_online = len(joined - left)
 
-    assert server.stdin is not None
+    send("stop")
     try:
-        server.stdin.write("stop\n")
-        server.stdin.flush()
         server.wait(timeout=60)
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
         server.kill()
 
     if not samples:
@@ -149,6 +211,11 @@ def main() -> int:
         "startup_s": round(startup_s, 2),
         "rss_avg_mib": round(sum(samples) / len(samples) / mib, 1),
         "rss_peak_mib": round(max(samples) / mib, 1),
+        "cpu_cores_avg": round(cpu_cores, 2),
+        "mspt_avg": round(sum(mspt_avg) / len(mspt_avg), 2) if mspt_avg else None,
+        "mspt_worst_window_avg": round(max(mspt_avg), 2) if mspt_avg else None,
+        "mspt_max_tick": round(max(mspt_max), 2) if mspt_max else None,
+        "mspt_samples": len(mspt_avg),
         "samples": len(samples),
         "bots": args.bots,
         "warmup_s": args.warmup,
