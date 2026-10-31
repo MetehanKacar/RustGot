@@ -121,6 +121,16 @@ impl Mob for OcelotEntity {
         &self.mob_entity
     }
 
+    // Vanilla `Ocelot.removeWhenFarAway`: unlike other animals, wild ocelots despawn. Without
+    // this, jungle spawning (monster pass, creature cap) piles up ocelots without bound.
+    fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
+        let entity = self.get_entity();
+        !self.is_trusting()
+            && entity.tick_count.load(Ordering::Relaxed) > 2400
+            && entity.custom_name.load().is_none()
+            && !entity.is_leashed()
+    }
+
     fn mob_init_data_tracker(&self) {
         let entity = self.get_entity();
         let is_baby = entity.age.load(Ordering::Relaxed) < 0;

@@ -24,7 +24,6 @@ use pumpkin_util::random::xoroshiro128::Xoroshiro;
 use pumpkin_util::random::{RandomImpl, get_seed};
 use pumpkin_world::chunk::{ChunkData, ChunkHeightmapType};
 use pumpkin_world::generation::proto_chunk::GenerationCache;
-use rand::seq::IndexedRandom;
 use rand::{RngExt, rng};
 use std::fmt;
 use std::sync::Arc;
@@ -574,7 +573,7 @@ pub fn spawn_mobs_for_chunk_generation(
     let zo = chunk_z << 4;
 
     while rand::random::<f32>() < biome.creature_spawn_probability {
-        let Some(spawner_data) = creatures.choose(&mut rand::rng()) else {
+        let Some(spawner_data) = choose_weighted_spawner(creatures, &mut rand::rng()) else {
             continue;
         };
 
@@ -945,7 +944,7 @@ pub fn get_random_spawn_mob_at(
     {
         None
     } else {
-        match category.id {
+        let spawners = match category.id {
             id if id == MobCategory::MONSTER.id => biome.spawners.monster,
             id if id == MobCategory::CREATURE.id => biome.spawners.creature,
             id if id == MobCategory::AMBIENT.id => biome.spawners.ambient,
@@ -957,9 +956,26 @@ pub fn get_random_spawn_mob_at(
             id if id == MobCategory::WATER_AMBIENT.id => biome.spawners.water_ambient,
             id if id == MobCategory::MISC.id => biome.spawners.misc,
             _ => biome.spawners.misc,
-        }
-        .choose(&mut rng())
+        };
+        choose_weighted_spawner(spawners, &mut rng())
     }
+}
+
+/// Vanilla `WeightedList.getRandom`: picks a spawner with probability proportional to its
+/// weight. A uniform pick over-spawns rare entries (e.g. jungle ocelots, weight 2 of 517).
+pub fn choose_weighted_spawner<'a, R: RngExt + ?Sized>(
+    spawners: &'a [Spawner],
+    rng: &mut R,
+) -> Option<&'a Spawner> {
+    let total: i32 = spawners.iter().map(|spawner| spawner.weight.max(0)).sum();
+    if total <= 0 {
+        return None;
+    }
+    let mut roll = rng.random_range(0..total);
+    spawners.iter().find(|spawner| {
+        roll -= spawner.weight.max(0);
+        roll < 0
+    })
 }
 
 #[must_use]
@@ -1141,6 +1157,49 @@ fn is_burning_block(block: &Block) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
+
+    #[test]
+    fn spawner_choice_follows_vanilla_weights() {
+        // Jungle monsters: ocelot has weight 2 out of 517. A uniform pick (1 in 9) made
+        // ocelots the dominant daytime spawn and piled them up without bound.
+        let spawners = pumpkin_data::chunk::Biome::JUNGLE.spawners.monster;
+        let total: i32 = spawners.iter().map(|s| s.weight).sum();
+        let ocelot_weight = spawners
+            .iter()
+            .find(|s| s.r#type == "minecraft:ocelot")
+            .expect("jungle spawns ocelots")
+            .weight;
+        assert_eq!((ocelot_weight, total), (2, 517));
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+        let picks = 200_000;
+        let ocelots = (0..picks)
+            .filter(|_| {
+                choose_weighted_spawner(spawners, &mut rng)
+                    .is_some_and(|s| s.r#type == "minecraft:ocelot")
+            })
+            .count();
+        let share = ocelots as f64 / f64::from(picks);
+        let expected = f64::from(ocelot_weight) / f64::from(total);
+        assert!(
+            (share - expected).abs() < 0.002,
+            "ocelot share {share:.4}, expected {expected:.4}"
+        );
+    }
+
+    #[test]
+    fn spawner_choice_handles_empty_and_zero_weight_lists() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1);
+        assert!(choose_weighted_spawner(&[], &mut rng).is_none());
+        let zero = [Spawner {
+            r#type: "minecraft:pig",
+            min_count: 1,
+            max_count: 1,
+            weight: 0,
+        }];
+        assert!(choose_weighted_spawner(&zero, &mut rng).is_none());
+    }
 
     #[test]
     fn potential_change_is_finite_beyond_i32_range() {

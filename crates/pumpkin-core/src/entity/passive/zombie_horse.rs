@@ -127,6 +127,12 @@ impl Mob for ZombieHorseEntity {
         self.is_tame()
     }
 
+    // Vanilla `ZombieHorse.removeWhenFarAway` always allows despawning; `check_despawn` still
+    // keeps persistent and name-tagged ones.
+    fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
+        true
+    }
+
     fn mob_play_step_sound(&self, pos: &BlockPos, state: &BlockState) {
         super::horse::play_horse_step_sound(self, pos, state, true);
     }

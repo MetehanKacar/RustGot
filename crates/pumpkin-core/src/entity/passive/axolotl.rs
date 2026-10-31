@@ -229,6 +229,11 @@ impl Mob for AxolotlEntity {
         Some(self)
     }
 
+    // Vanilla `Axolotl.removeWhenFarAway`: naturally spawned axolotls despawn like fish.
+    fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
+        !self.is_from_bucket() && self.get_entity().custom_name.load().is_none()
+    }
+
     fn as_animal(&self) -> Option<&dyn Animal> {
         Some(self)
     }
