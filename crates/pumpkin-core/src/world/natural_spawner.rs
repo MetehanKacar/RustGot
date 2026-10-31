@@ -3,12 +3,14 @@ use crate::entity::EntityBase;
 use crate::entity::mob::spawn::finalize_spawn;
 use crate::entity::r#type::{check_spawn_rules, from_type};
 use crate::world::World;
+use crate::world::spawn_level::GenerationSpawnLevel;
 use arc_swap::ArcSwap;
 use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
 use pumpkin_data::biome::Spawner;
 use pumpkin_data::chunk::Biome;
 use pumpkin_data::dimension::Dimension;
+use pumpkin_data::fluid::Fluid;
 use pumpkin_data::entity::{EntityType, MobCategory, SpawnLocation};
 use pumpkin_data::tag::Block::MINECRAFT_PREVENT_MOB_SPAWNING_INSIDE;
 use pumpkin_data::tag::Fluid::{MINECRAFT_LAVA, MINECRAFT_WATER};
@@ -611,13 +613,23 @@ pub fn spawn_mobs_for_chunk_generation(
                         (f64::from(z)).clamp(f64::from(zo) + width, f64::from(zo) + 16.0 - width);
                     let spawn_pos_f64 = Vector3::new(fx, f64::from(pos.0.y), fz);
                     let check_pos = BlockPos::new(fx.floor() as i32, pos.0.y, fz.floor() as i32);
+                    let spawn_box = entity_type.get_spawn_bounding_box(fx, f64::from(pos.0.y), fz);
 
-                    if world.is_space_empty(entity_type.get_spawn_bounding_box(
-                        fx,
-                        f64::from(pos.0.y),
-                        fz,
-                    )) && check_spawn_rules(entity_type, world, &check_pos, false)
+                    // Vanilla checks against the `WorldGenRegion`; the chunk is not in the world
+                    // yet. A failed collision or rule check retries without moving (`continue`).
+                    let level = GenerationSpawnLevel {
+                        cache: &*cache,
+                        world: world.as_ref(),
+                    };
+                    if !is_space_empty_in_generation(cache, &spawn_box)
+                        || !check_spawn_rules(entity_type, &level, &check_pos, false)
                     {
+                        continue;
+                    }
+
+                    // `Mob.checkSpawnObstruction`: no liquid inside the mob. A `WorldGenRegion`
+                    // has no entities, so nothing else can obstruct it.
+                    if !contains_any_liquid_in_generation(cache, &spawn_box) {
                         let entity = from_type(entity_type, spawn_pos_f64, world, Uuid::new_v4());
                         entity
                             .get_entity()
@@ -637,6 +649,49 @@ pub fn spawn_mobs_for_chunk_generation(
             }
         }
     }
+}
+
+/// Vanilla `noCollision` against a `WorldGenRegion`: no block overlapping `bounding_box` has a
+/// collision shape. Coarser than the live-world check (it treats any shape as filling its block),
+/// which only errs towards not spawning.
+fn is_space_empty_in_generation(
+    cache: &dyn GenerationCache,
+    bounding_box: &pumpkin_util::math::boundingbox::BoundingBox,
+) -> bool {
+    let min = bounding_box.min;
+    let max = bounding_box.max;
+    for x in min.x.floor() as i32..max.x.ceil() as i32 {
+        for y in min.y.floor() as i32..max.y.ceil() as i32 {
+            for z in min.z.floor() as i32..max.z.ceil() as i32 {
+                let state = GenerationCache::get_block_state(cache, &Vector3::new(x, y, z)).to_state();
+                if !state.collision_shapes.is_empty() {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Vanilla `containsAnyLiquid` against a `WorldGenRegion`.
+fn contains_any_liquid_in_generation(
+    cache: &dyn GenerationCache,
+    bounding_box: &pumpkin_util::math::boundingbox::BoundingBox,
+) -> bool {
+    let min = bounding_box.min;
+    let max = bounding_box.max;
+    for x in min.x.floor() as i32..max.x.ceil() as i32 {
+        for y in min.y.floor() as i32..max.y.ceil() as i32 {
+            for z in min.z.floor() as i32..max.z.ceil() as i32 {
+                let (fluid, _) =
+                    GenerationCache::get_fluid_and_fluid_state(cache, &Vector3::new(x, y, z));
+                if fluid != Fluid::EMPTY {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 pub fn get_top_non_colliding_pos(
@@ -1004,7 +1059,7 @@ pub fn is_valid_spawn_position_for_type(
     if !is_spawn_position_ok(world, block_pos, entity_type) {
         return false;
     }
-    if !check_spawn_rules(entity_type, world, block_pos, is_thundering) {
+    if !check_spawn_rules(entity_type, world.as_ref(), block_pos, is_thundering) {
         return false;
     }
     if !world.is_space_empty(entity_type.get_spawn_bounding_box(

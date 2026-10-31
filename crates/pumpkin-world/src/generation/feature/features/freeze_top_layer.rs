@@ -1,5 +1,5 @@
 use crate::generation::proto_chunk::GenerationCache;
-use crate::lighting::engine::{BlockLightProvider, LightProvider};
+use pumpkin_util::math::vector3::Vector3;
 use pumpkin_data::block_properties::{
     BlockProperties, GrassBlockLikeProperties, SnowLikeProperties,
 };
@@ -126,19 +126,7 @@ fn is_full_snow_layer(state: BlockStateId) -> bool {
 /// Block light at a world position during generation. Sections without
 /// computed light read as 0, matching vanilla worldgen behavior.
 fn block_light_at<T: GenerationCache>(chunk: &T, x: i32, y: i32, z: i32) -> u8 {
-    let Some(proto) = chunk.get_chunk(x >> 4, z >> 4) else {
-        return 0;
-    };
-    let Ok(section_idx) = usize::try_from((y - i32::from(proto.bottom_y())) / 16) else {
-        return 0;
-    };
-    BlockLightProvider::get_light_proto(
-        proto,
-        section_idx,
-        (x & 15) as usize,
-        (y & 15) as usize,
-        (z & 15) as usize,
-    )
+    chunk.get_block_light(&Vector3::new(x, y, z))
 }
 
 #[cfg(test)]
@@ -149,7 +137,6 @@ mod tests {
     use pumpkin_data::chunk::Biome;
     use pumpkin_data::dimension::Dimension;
     use pumpkin_data::placed_feature::PlacedFeature;
-    use pumpkin_util::math::vector3::Vector3;
     use pumpkin_util::random::RandomGenerator;
     use pumpkin_util::random::legacy_rand::LegacyRand;
     use pumpkin_util::world_seed::Seed;

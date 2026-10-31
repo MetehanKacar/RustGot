@@ -1,3 +1,4 @@
+use crate::world::spawn_level::SpawnLevel;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Weak};
 
@@ -20,7 +21,6 @@ use crate::entity::{
     ai::goal::Goal,
     mob::{Mob, MobEntity},
 };
-use crate::world::World;
 use pumpkin_util::random::RandomImpl;
 use rand::RngExt;
 
@@ -154,8 +154,8 @@ impl SlimeEntity {
         self.get_size() <= 1
     }
 
-    pub fn check_slime_spawn_rules(world: &World, pos: &BlockPos) -> bool {
-        if world.level_info.load().difficulty == Difficulty::Peaceful {
+    pub fn check_slime_spawn_rules(world: &(impl SpawnLevel + ?Sized), pos: &BlockPos) -> bool {
+        if world.difficulty() == Difficulty::Peaceful {
             return false;
         }
 
@@ -182,7 +182,7 @@ impl SlimeEntity {
 
         // Slime Chunk Spawning
         let chunk_pos = pos.chunk_position();
-        let world_seed = world.level.seed.0;
+        let world_seed = world.seed();
         let slime_seed = pumpkin_util::random::seed_slime_chunk(
             chunk_pos.x,
             chunk_pos.y,

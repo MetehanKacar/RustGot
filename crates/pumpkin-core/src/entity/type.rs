@@ -1,3 +1,4 @@
+use crate::world::spawn_level::SpawnLevel;
 use crate::entity::projectile::owner::ProjectileOwner;
 use std::sync::Arc;
 
@@ -447,7 +448,7 @@ pub fn self_and_passengers(entity: &Arc<dyn EntityBase>) -> Vec<Arc<dyn EntityBa
 #[expect(clippy::too_many_lines)]
 pub fn check_spawn_rules(
     entity_type: &'static EntityType,
-    world: &World,
+    world: &(impl SpawnLevel + ?Sized),
     pos: &BlockPos,
     is_thundering: bool,
 ) -> bool {
@@ -514,14 +515,12 @@ pub fn check_spawn_rules(
         if !mob::MobEntity::check_any_light_monster_spawn_rules(world, pos) {
             return false;
         }
-        return world
-            .get_closest_player(pos.to_centered_f64(), 5.0)
-            .is_none();
+        return !world.is_player_within(pos.to_centered_f64(), 5.0);
     }
 
     // Ghast
     if id == EntityType::GHAST.id {
-        if world.level_info.load().difficulty == pumpkin_util::Difficulty::Peaceful {
+        if world.difficulty() == pumpkin_util::Difficulty::Peaceful {
             return false;
         }
         if rand::random_range(0..20) != 0 {
@@ -532,7 +531,7 @@ pub fn check_spawn_rules(
 
     // Magma Cube
     if id == EntityType::MAGMA_CUBE.id {
-        if world.level_info.load().difficulty == pumpkin_util::Difficulty::Peaceful {
+        if world.difficulty() == pumpkin_util::Difficulty::Peaceful {
             return false;
         }
         return mob::MobEntity::check_mob_spawn_rules(world, pos);
@@ -557,7 +556,7 @@ pub fn check_spawn_rules(
         return mob::MobEntity::check_mob_spawn_rules(world, pos);
     }
     if id == EntityType::ZOMBIFIED_PIGLIN.id {
-        if world.level_info.load().difficulty == pumpkin_util::Difficulty::Peaceful {
+        if world.difficulty() == pumpkin_util::Difficulty::Peaceful {
             return false;
         }
         let below = pos.down();
@@ -685,7 +684,7 @@ pub fn check_spawn_rules(
         return mob::MobEntity::check_animal_spawn_rules(world, pos);
     }
     if id == EntityType::TURTLE.id {
-        let sea_level = world.sea_level;
+        let sea_level = world.sea_level();
         let below = pos.down();
         return pos.0.y < sea_level + 4
             && world
@@ -724,13 +723,13 @@ pub fn check_spawn_rules(
             .has_tag(&pumpkin_data::tag::Block::MINECRAFT_AXOLOTLS_SPAWNABLE_ON);
     }
     if id == EntityType::GLOW_SQUID.id {
-        let sea_level = world.sea_level;
+        let sea_level = world.sea_level();
         return pos.0.y <= sea_level - 33
             && world.get_raw_brightness(pos, 0) == 0
             && world.get_block(pos) == &pumpkin_data::Block::WATER;
     }
     if id == EntityType::NAUTILUS.id {
-        let sea_level = world.sea_level;
+        let sea_level = world.sea_level();
         let min_spawn_level = sea_level - 25;
         return pos.0.y >= min_spawn_level
             && pos.0.y <= sea_level - 5
@@ -743,7 +742,7 @@ pub fn check_spawn_rules(
                     .has_tag(&pumpkin_data::tag::Fluid::MINECRAFT_WATER));
     }
     if id == EntityType::DROWNED.id {
-        if world.level_info.load().difficulty == pumpkin_util::Difficulty::Peaceful {
+        if world.difficulty() == pumpkin_util::Difficulty::Peaceful {
             return false;
         }
         if !world
@@ -763,11 +762,11 @@ pub fn check_spawn_rules(
         {
             return rand::random_range(0..15) == 0;
         }
-        let sea_level = world.sea_level;
+        let sea_level = world.sea_level();
         return pos.0.y < sea_level - 5 && rand::random_range(0..40) == 0;
     }
     if id == EntityType::GUARDIAN.id || id == EntityType::ELDER_GUARDIAN.id {
-        if world.level_info.load().difficulty == pumpkin_util::Difficulty::Peaceful {
+        if world.difficulty() == pumpkin_util::Difficulty::Peaceful {
             return false;
         }
         if !world

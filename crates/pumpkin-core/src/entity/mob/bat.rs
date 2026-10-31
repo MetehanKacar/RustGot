@@ -1,3 +1,4 @@
+use crate::world::spawn_level::SpawnLevel;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering::Relaxed};
@@ -9,7 +10,6 @@ use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
-use pumpkin_world::chunk::ChunkHeightmapType;
 use rand::RngExt;
 
 use crate::entity::mob::{Mob, MobEntity};
@@ -41,8 +41,8 @@ impl BatEntity {
     }
 
     #[must_use]
-    pub fn check_bat_spawn_rules(world: &World, pos: &BlockPos) -> bool {
-        if pos.0.y >= world.get_heightmap_height(ChunkHeightmapType::WorldSurface, pos.0.x, pos.0.z)
+    pub fn check_bat_spawn_rules(world: &(impl SpawnLevel + ?Sized), pos: &BlockPos) -> bool {
+        if pos.0.y >= world.world_surface_height(pos.0.x, pos.0.z)
         {
             return false;
         }

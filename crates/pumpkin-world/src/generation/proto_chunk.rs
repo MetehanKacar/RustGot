@@ -101,6 +101,16 @@ pub trait GenerationCache: HeightLimitView + BlockAccessor {
     fn get_sea_level(&self) -> i32 {
         self.get_center_chunk().get_sea_level()
     }
+    /// Sky light at `pos` from the lighting stage (15 above the chunk, 0 if not cached).
+    fn get_sky_light(&self, pos: &Vector3<i32>) -> u8 {
+        self.get_chunk(pos.x >> 4, pos.z >> 4)
+            .map_or(0, |chunk| chunk.light_at(pos.x, pos.y, pos.z).0)
+    }
+    /// Block light at `pos` from the lighting stage (0 if not cached).
+    fn get_block_light(&self, pos: &Vector3<i32>) -> u8 {
+        self.get_chunk(pos.x >> 4, pos.z >> 4)
+            .map_or(0, |chunk| chunk.light_at(pos.x, pos.y, pos.z).1)
+    }
 }
 
 const AIR_BLOCK: Block = Block::AIR;
@@ -421,6 +431,21 @@ impl ProtoChunk {
     #[must_use]
     pub const fn height(&self) -> u16 {
         self.height
+    }
+
+    /// `(sky, block)` light at a world position inside this chunk. Above the chunk the sky is
+    /// fully lit; below it everything is dark.
+    #[must_use]
+    pub fn light_at(&self, x: i32, y: i32, z: i32) -> (u8, u8) {
+        use crate::lighting::engine::{BlockLightProvider, LightProvider, SkyLightProvider};
+        let Ok(local_y) = usize::try_from(y - i32::from(self.bottom_y())) else {
+            return (0, 0);
+        };
+        let (section, lx, ly, lz) = (local_y >> 4, (x & 15) as usize, (y & 15) as usize, (z & 15) as usize);
+        (
+            SkyLightProvider::get_light_proto(self, section, lx, ly, lz),
+            BlockLightProvider::get_light_proto(self, section, lx, ly, lz),
+        )
     }
 
     #[must_use]
@@ -1951,5 +1976,36 @@ impl GenerationCache for ProtoChunk {
     }
     fn get_sea_level(&self) -> i32 {
         Self::get_sea_level(self)
+    }
+}
+
+#[cfg(test)]
+mod light_tests {
+    use super::ProtoChunk;
+    use crate::generation::generator::{GeneratorInit, VanillaGenerator, WorldGenerator};
+    use pumpkin_data::dimension::Dimension;
+    use pumpkin_util::world_seed::Seed;
+
+    #[test]
+    fn light_at_reads_sections_and_defaults_outside_the_chunk() {
+        let world_gen = WorldGenerator::Noise(Box::new(VanillaGenerator::new(
+            Seed(42),
+            Dimension::OVERWORLD,
+        )));
+        let mut chunk = ProtoChunk::new(0, 0, &world_gen);
+        let bottom = i32::from(chunk.bottom_y());
+        let top = bottom + i32::from(chunk.height());
+
+        // y = 70 sits in section (70 - bottom) / 16 at local y 6.
+        let section = usize::try_from((70 - bottom) >> 4).unwrap();
+        chunk.light.sky_light[section].set(3, 6, 5, 12);
+        chunk.light.block_light[section].set(3, 6, 5, 7);
+        assert_eq!(chunk.light_at(3, 70, 5), (12, 7));
+        // Positions are world coordinates; only the low 4 bits pick the column.
+        assert_eq!(chunk.light_at(16 + 3, 70, -16 + 5), (12, 7));
+
+        // Above the build height the sky is open; below it everything is dark.
+        assert_eq!(chunk.light_at(0, top + 5, 0), (15, 0));
+        assert_eq!(chunk.light_at(0, bottom - 1, 0), (0, 0));
     }
 }

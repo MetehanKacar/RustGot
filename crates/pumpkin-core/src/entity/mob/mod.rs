@@ -1,3 +1,4 @@
+use crate::world::spawn_level::SpawnLevel;
 use super::{Entity, EntityBase, ai::pathfinder::Navigator, living::LivingEntity};
 use crate::block::blocks::bubble_column::SURFACE_UPWARD_ACCELERATION;
 use crate::entity::ai::behavior::temperament::Temperament;
@@ -749,13 +750,13 @@ impl MobEntity {
         min_range <= 0.0 || !self.get_attack_box(min_range).intersects(&target_hitbox)
     }
 
-    pub fn is_dark_enough_to_spawn(world: &World, pos: &BlockPos, is_thundering: bool) -> bool {
+    pub fn is_dark_enough_to_spawn(world: &(impl SpawnLevel + ?Sized), pos: &BlockPos, is_thundering: bool) -> bool {
         let sky_light = world.get_sky_light_level(pos);
         if sky_light > rand::random_range(0..32) {
             return false;
         }
 
-        let dimension = &world.dimension;
+        let dimension = world.dimension();
         let block_light_limit = dimension.monster_spawn_block_light_limit;
 
         let block_light = world.get_block_light_level(pos).unwrap_or(0);
@@ -774,14 +775,14 @@ impl MobEntity {
         current_brightness <= dimension.monster_spawn_light_level.get(&mut random) as u8
     }
 
-    pub fn check_mob_spawn_rules(world: &World, pos: &BlockPos) -> bool {
+    pub fn check_mob_spawn_rules(world: &(impl SpawnLevel + ?Sized), pos: &BlockPos) -> bool {
         let below = pos.down();
         let state = world.get_block_state(&below);
         state.is_side_solid(BlockDirection::Up)
     }
 
-    pub fn check_monster_spawn_rules(world: &World, pos: &BlockPos, is_thundering: bool) -> bool {
-        if world.level_info.load().difficulty == Difficulty::Peaceful {
+    pub fn check_monster_spawn_rules(world: &(impl SpawnLevel + ?Sized), pos: &BlockPos, is_thundering: bool) -> bool {
+        if world.difficulty() == Difficulty::Peaceful {
             return false;
         }
 
@@ -792,8 +793,8 @@ impl MobEntity {
         Self::check_mob_spawn_rules(world, pos)
     }
 
-    pub fn check_any_light_monster_spawn_rules(world: &World, pos: &BlockPos) -> bool {
-        if world.level_info.load().difficulty == Difficulty::Peaceful {
+    pub fn check_any_light_monster_spawn_rules(world: &(impl SpawnLevel + ?Sized), pos: &BlockPos) -> bool {
+        if world.difficulty() == Difficulty::Peaceful {
             return false;
         }
 
@@ -801,14 +802,14 @@ impl MobEntity {
     }
 
     pub fn check_surface_monsters_spawn_rules(
-        world: &World,
+        world: &(impl SpawnLevel + ?Sized),
         pos: &BlockPos,
         is_thundering: bool,
     ) -> bool {
         Self::check_monster_spawn_rules(world, pos, is_thundering) && world.can_see_sky(pos)
     }
 
-    pub fn check_animal_spawn_rules(world: &World, pos: &BlockPos) -> bool {
+    pub fn check_animal_spawn_rules(world: &(impl SpawnLevel + ?Sized), pos: &BlockPos) -> bool {
         let below = pos.down();
         world
             .get_block(&below)
@@ -816,12 +817,12 @@ impl MobEntity {
             && Self::is_bright_enough_to_spawn(world, pos)
     }
 
-    pub fn is_bright_enough_to_spawn(world: &World, pos: &BlockPos) -> bool {
+    pub fn is_bright_enough_to_spawn(world: &(impl SpawnLevel + ?Sized), pos: &BlockPos) -> bool {
         world.get_max_local_raw_brightness(pos) > 8
     }
 
-    pub fn check_surface_water_animal_spawn_rules(world: &World, pos: &BlockPos) -> bool {
-        let sea_level = world.sea_level;
+    pub fn check_surface_water_animal_spawn_rules(world: &(impl SpawnLevel + ?Sized), pos: &BlockPos) -> bool {
+        let sea_level = world.sea_level();
         let min_spawn_level = sea_level - 13;
         pos.0.y >= min_spawn_level
             && pos.0.y <= sea_level
@@ -831,7 +832,7 @@ impl MobEntity {
             && world.get_block(&pos.up()) == &Block::WATER
     }
 
-    pub fn check_surface_ageable_water_creature_spawn_rules(world: &World, pos: &BlockPos) -> bool {
+    pub fn check_surface_ageable_water_creature_spawn_rules(world: &(impl SpawnLevel + ?Sized), pos: &BlockPos) -> bool {
         Self::check_surface_water_animal_spawn_rules(world, pos)
     }
 
