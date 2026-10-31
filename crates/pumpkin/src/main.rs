@@ -30,6 +30,7 @@ use pumpkin_core::{
 use pumpkin_core::{PumpkinServer, stop_server};
 
 use pumpkin_config::{LoadConfiguration, PumpkinConfig};
+use rustgot_config::RustGotConfig;
 use pumpkin_core::plugin::loader::PluginLoader;
 use pumpkin_util::text::{
     TextComponent,
@@ -71,6 +72,7 @@ async fn main() {
     let exec_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     let config = PumpkinConfig::load(&exec_dir);
+    let rustgot_config = RustGotConfig::load(&exec_dir);
 
     let vanilla_data = VanillaData::load();
 
@@ -119,7 +121,7 @@ async fn main() {
         "{}",
         TextComponent::text(format!(
             "Starting {} {} Java Minecraft (Protocol {}) | {} Bedrock (Protocol {})",
-            TextComponent::text("Pumpkin")
+            TextComponent::text("RustGot")
                 .color_named(NamedColor::Gold)
                 .to_pretty_console(),
             TextComponent::text(CARGO_PKG_VERSION.to_string())
@@ -151,10 +153,22 @@ async fn main() {
     );
     if cfg!(debug_assertions) {
         warn!(
-            "Pumpkin is running an unoptimized debug build. Do not use this build for performance testing; run `cargo run --release` or use a release binary."
+            "RustGot is running an unoptimized debug build. Do not use this build for performance testing; run `cargo run --release` or use a release binary."
         );
     }
     print_support_links_and_warning();
+
+    let java_plugins = rustgot_config::java_plugin_jars(&exec_dir.join("plugins"));
+    if !java_plugins.is_empty() {
+        if rustgot_config.jvm.enabled {
+            warn!(
+                "Found {} Java plugin(s) in plugins/, but the Java plugin bridge is not available yet; they will not be loaded.",
+                java_plugins.len()
+            );
+        } else {
+            info!("Java plugins are disabled in rustgot.yml (jvm.enabled: false)");
+        }
+    }
 
     tokio::spawn(async {
         if let Err(err) = setup_sighandler().await {

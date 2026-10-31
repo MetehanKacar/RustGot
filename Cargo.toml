@@ -24,6 +24,7 @@ members = [
     "crates/pumpkin-wasm-host-v0_1",
     "crates/pumpkin-wasm-host-v0_2",
     "crates/pumpkin-world",
+    "crates/rustgot-config",
     "tools/pumpkin-codegen",
     "tools/pumpkin-fuzzer",
     "tools/pumpkin-tester",
@@ -216,6 +217,7 @@ pumpkin-auth = { path = "crates/pumpkin-auth", default-features = false }
 pumpkin-codecs = { path = "crates/pumpkin-codecs", default-features = false }
 pumpkin-command = { path = "crates/pumpkin-command", default-features = false }
 pumpkin-config = { path = "crates/pumpkin-config", default-features = false }
+rustgot-config = { path = "crates/rustgot-config" }
 pumpkin-core = { path = "crates/pumpkin-core", default-features = false }
 pumpkin-data = { path = "crates/pumpkin-data", default-features = false }
 pumpkin-gametest = { path = "crates/pumpkin-gametest", default-features = false }

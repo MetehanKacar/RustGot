@@ -8,14 +8,19 @@ license.workspace = true
 
 [package.metadata.tauri-winres]
 # FileDescription is handled as the Program name by Windows!
-FileDescription = "Pumpkin"
-OriginalFilename = "pumpkin.exe"
+FileDescription = "RustGot"
+OriginalFilename = "rustgot.exe"
 LegalCopyright = "Copyright © 2026 Aleksander Medvedev"
+
+[[bin]]
+name = "rustgot"
+path = "src/main.rs"
 
 [dependencies]
 pumpkin-core.workspace = true
 pumpkin-wasm-host.workspace = true
 pumpkin-config.workspace = true
+rustgot-config.workspace = true
 pumpkin-data = { workspace = true, features = ["default"] }
 pumpkin-util.workspace = true
 pumpkin-world.workspace = true

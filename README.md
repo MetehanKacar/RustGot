@@ -1,5 +1,49 @@
 <div align="center">
 
+# RustGot
+
+**A Purpur-compatible Minecraft server written in Rust.**
+
+</div>
+
+RustGot is a soft fork of [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) that aims to replace
+[Purpur](https://github.com/PurpurMC/Purpur) servers while using far less memory:
+
+- **Low memory, no performance loss**: world, chunk and entity data live in Rust. Target: at least
+  50% less RSS than Purpur on the same world and load, with equal or better MSPT.
+- **Paper/Purpur plugins**: `.jar` plugins run in an embedded JVM that is only started when
+  `plugins/` contains `.jar` files. Plugins that use NMS/CraftBukkit internals are not supported.
+  If no Java 25+ is installed, GraalVM Community JDK 25 is downloaded automatically
+  (`jvm.auto-download` in `rustgot.yml`).
+- **Rust plugins**: Pumpkin's Wasm (primary) and native plugin APIs.
+- **Drop-in**: existing Anvil worlds, `server.properties` and `purpur.yml` work as-is.
+
+> [!IMPORTANT]
+> RustGot is in early development. The Java plugin bridge and Purpur features are not
+> implemented yet. See the roadmap below.
+
+### Roadmap
+
+1. Foundation: fork, branding, `rustgot.yml`, CI, memory benchmark (`tools/rustgot-bench`)
+2. Close vanilla gaps (mob AI, redstone, fluids, saving, advancements)
+3. Java plugin bridge (based on PatchBukkit) and the Bukkit API core
+4. Paper API and plugin compatibility (EssentialsX, LuckPerms, Vault, WorldEdit, ...)
+5. Purpur: `purpur.yml`, per-world settings, ridables
+6. Stable Rust plugin API
+
+### Building
+
+```bash
+cargo build --release --bin rustgot
+```
+
+RustGot keeps upstream's layout: RustGot-specific code lives in `rustgot-*` crates so upstream
+Pumpkin can be merged regularly. Upstream's README follows.
+
+---
+
+<div align="center">
+
 # Pumpkin
 
 [![CI](https://github.com/Pumpkin-MC/Pumpkin/actions/workflows/rust.yml/badge.svg)](https://github.com/Pumpkin-MC/Pumpkin/actions/workflows/rust.yml)

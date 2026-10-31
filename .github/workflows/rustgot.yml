@@ -1,0 +1,41 @@
+name: RustGot
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - run: rustup update stable && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p rustgot-config -p pumpkin --all-targets
+      - run: cargo test -p rustgot-config
+      - run: cargo build --release --bin rustgot
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustgot-${{ matrix.os }}
+          path: |
+            target/release/rustgot
+            target/release/rustgot.exe
+          if-no-files-found: error
