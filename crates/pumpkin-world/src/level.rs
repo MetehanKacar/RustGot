@@ -81,6 +81,9 @@ pub struct Level {
     pub loaded_chunks: Arc<DashMap<Vector2<i32>, SyncChunk>>,
     pub(crate) loaded_chunk_changes: Arc<SegQueue<LoadedChunkChange>>,
     loaded_entity_chunks: Arc<DashMap<Vector2<i32>, SyncEntityChunk>>,
+    /// Entity chunks dropped from `loaded_entity_chunks` whose write to disk has not finished.
+    /// Reads must come from here, or they see the old data on disk and lose the entities.
+    unloading_entity_chunks: Arc<DashMap<Vector2<i32>, SyncEntityChunk>>,
     pub chunks_with_scheduled_ticks: Arc<dashmap::DashSet<Vector2<i32>>>,
     pub chunk_loading: Mutex<ChunkLoading>,
 
@@ -305,6 +308,7 @@ impl Level {
             loaded_chunks: Arc::new(DashMap::new()),
             loaded_chunk_changes: Arc::new(SegQueue::new()),
             loaded_entity_chunks: Arc::new(DashMap::new()),
+            unloading_entity_chunks: Arc::new(DashMap::new()),
             chunks_with_scheduled_ticks: Arc::new(dashmap::DashSet::new()),
             chunk_loading: Mutex::new(ChunkLoading::new(level_channel.clone())),
             chunk_watchers: Arc::new(DashMap::new()),
@@ -526,8 +530,11 @@ impl Level {
                     return None;
                 }
 
-                // Remove immediately to prevent race conditions
-                self.loaded_entity_chunks.remove(pos)
+                // Remove immediately to prevent race conditions, but keep it readable until
+                // the write lands.
+                let (pos, chunk) = self.loaded_entity_chunks.remove(pos)?;
+                self.unloading_entity_chunks.insert(pos, chunk.clone());
+                Some((pos, chunk))
             })
             .collect();
 
@@ -538,7 +545,16 @@ impl Level {
         let level = self.clone();
         self.spawn_task(async move {
             debug!("Writing {} entity chunks to disk", chunks_to_process.len());
+            let written: Vec<_> = chunks_to_process
+                .iter()
+                .map(|(pos, chunk)| (*pos, chunk.clone()))
+                .collect();
             level.write_entity_chunks(chunks_to_process).await;
+            for (pos, chunk) in written {
+                level
+                    .unloading_entity_chunks
+                    .remove_if(&pos, |_, pending| Arc::ptr_eq(pending, &chunk));
+            }
         });
     }
 
@@ -747,8 +763,16 @@ impl Level {
                 let to_fetch: Vec<_> = chunks
                     .iter()
                     .filter(|pos| {
-                        level.loaded_entity_chunks.get(pos).is_none_or(|chunk| {
-                            let _ = sender.try_send((Arc::downgrade(chunk.value()), false));
+                        let in_memory = level
+                            .loaded_entity_chunks
+                            .get(pos)
+                            .map(|chunk| chunk.value().clone())
+                            .or_else(|| level.take_back_unloading_entity_chunk(**pos));
+                        in_memory.is_none_or(|chunk| {
+                            // A chunk in memory whose entities never went live (loaded only
+                            // to save into, or taken back mid-unload) still has to spawn them.
+                            let first_load = !chunk.live.load(Ordering::Relaxed);
+                            let _ = sender.try_send((Arc::downgrade(&chunk), first_load));
                             false // Don't fetch
                         })
                     })
@@ -805,9 +829,20 @@ impl Level {
         receiver
     }
 
+    /// Moves an entity chunk that is still being written back into `loaded_entity_chunks`.
+    fn take_back_unloading_entity_chunk(&self, pos: Vector2<i32>) -> Option<SyncEntityChunk> {
+        // Unloading already marked it not live, so its saved entities spawn again.
+        let chunk = self.unloading_entity_chunks.get(&pos)?.value().clone();
+        self.loaded_entity_chunks.insert(pos, chunk.clone());
+        Some(chunk)
+    }
+
     pub async fn get_entity_chunk(self: &Arc<Self>, pos: Vector2<i32>) -> SyncEntityChunk {
         if let Some(chunk) = self.loaded_entity_chunks.get(&pos) {
             return chunk.clone();
+        }
+        if let Some(chunk) = self.take_back_unloading_entity_chunk(pos) {
+            return chunk;
         }
 
         if let Ok((chunk, _)) = self.load_single_entity_chunk(pos).await {

@@ -5165,6 +5165,14 @@ impl World {
 
         self.save_entities_by_chunk(&entities_to_remove, chunks_set.iter().copied())
             .await;
+        // Those entities now live only in the chunk's saved data. If the chunk stayed live, a
+        // player coming back before it is written would not respawn them, and the next unload
+        // would overwrite the data with the (empty) live list.
+        for chunk_pos in &chunks_set {
+            if let Some(chunk) = self.level.get_entity_chunk_sync(chunk_pos) {
+                chunk.live.store(false, Ordering::Relaxed);
+            }
+        }
 
         for entity in entities_to_remove {
             let base = entity.get_entity();
@@ -8009,6 +8017,44 @@ mod tests {
         assert!(cow.mob_entity.is_no_ai());
         Ok(())
     }
+    #[tokio::test]
+    async fn unloading_again_before_a_respawn_keeps_saved_entities()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::entity::{Entity, ai::test_support::world, passive::cow::CowEntity};
+        use pumpkin_data::entity::EntityType;
+        use pumpkin_util::math::{vector2::Vector2, vector3::Vector3};
+        use std::sync::{Arc, atomic::Ordering};
+
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let pos = Vector2::new(0, 0);
+        let cow = CowEntity::new(Entity::new(
+            world.clone(),
+            Vector3::new(0.5, 64.0, 0.5),
+            &EntityType::COW,
+        ));
+        // A player had the chunk loaded, so its entities are live.
+        world.level.get_entity_chunk(pos).await.live.store(true, Ordering::Relaxed);
+        world.entities.store(Arc::new(vec![cow]));
+
+        world.remove_entities_in_chunks([pos]).await;
+        // The chunk is unloaded again while still in memory, before anything respawned the
+        // cow (a player came back and left, or the unload task ran twice). The saved cow must
+        // survive instead of being replaced by the now-empty live list.
+        world.remove_entities_in_chunks([pos]).await;
+
+        let chunk = world.level.get_entity_chunk(pos).await;
+        let saved = chunk
+            .data
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        assert_eq!(saved, 1);
+        assert!(!chunk.live.load(Ordering::Relaxed));
+        world.level.shutdown().await;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn removal_clears_brain_memories_after_unload_serialization()
     -> Result<(), Box<dyn std::error::Error>> {
