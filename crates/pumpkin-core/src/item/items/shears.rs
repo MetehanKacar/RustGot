@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use crate::block::blocks::beehive::{MAX_HONEY_LEVEL, harvest_hive};
 use crate::block::registry::BlockActionResult;
 use crate::entity::Entity;
 use crate::entity::item::ItemEntity;
@@ -114,9 +115,9 @@ fn handle_beehive(
         return false;
     }
 
-    let mut props = BeeNestLikeProperties::from_state_id(state_id);
+    let props = BeeNestLikeProperties::from_state_id(state_id);
 
-    if props.honey_level != 5 {
+    if props.honey_level != MAX_HONEY_LEVEL {
         return false;
     }
 
@@ -138,11 +139,8 @@ fn handle_beehive(
         drops = event.harvested_items;
     }
 
-    props.honey_level = 0;
-    let new_state_id = props.to_state_id(block);
-
     let world = player.world();
-    world.set_block_state(location, new_state_id, BlockFlags::NOTIFY_ALL);
+    harvest_hive(&world, block, state_id, location, player);
     world.play_sound(
         Sound::BlockBeehiveShear,
         SoundCategory::Blocks,

@@ -1,9 +1,13 @@
 use super::BlockEntity;
+use crate::block::blocks::campfire::is_smokey_pos;
 use crate::entity::EntityBase;
 use crate::entity::ageable::AgeableMob;
 use crate::entity::passive::bee::BeeEntity;
+use crate::entity::player::Player;
 use crate::entity::r#type::load_entity_from_nbt;
+use crate::plugin::api::events::entity::entity_target::TargetReason;
 use crate::world::{BlockFlags, World};
+use pumpkin_data::Enchantment;
 use pumpkin_data::block_properties::BeeNestLikeProperties;
 use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::sound::{Sound, SoundCategory};
@@ -11,6 +15,7 @@ use pumpkin_data::tag::{self, Taggable};
 use pumpkin_data::{Block, HorizontalFacingExt};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_nbt::tag::NbtTag;
+use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::chunk::io::Dirtiable;
@@ -51,6 +56,8 @@ const IGNORED_BEE_TAGS: [&str; 25] = [
 pub const MAX_OCCUPANTS: usize = 3;
 pub const MIN_OCCUPATION_TICKS_NECTARLESS: i32 = 600;
 pub const MIN_OCCUPATION_TICKS_NECTAR: i32 = 2400;
+/// Ticks a bee stays out of the hive after a smoked hive was emptied.
+const STAY_OUT_OF_HIVE_WHEN_SEDATED: i32 = 400;
 const MAX_HONEY_LEVEL: u8 = 5;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -252,6 +259,20 @@ impl BlockEntity for BeehiveBlockEntity {
         Some(nbt)
     }
 
+    fn on_player_destroy(&self, world: &Arc<World>, position: &BlockPos, player: &Arc<Player>) {
+        let silk_touch = player
+            .inventory()
+            .held_item()
+            .get_enchantment_level(&Enchantment::SILK_TOUCH)
+            > 0;
+        if silk_touch {
+            return;
+        }
+        let state_id = world.get_block_state_id(position);
+        self.empty_all_living_from_hive(world, Some(player), state_id, BeeReleaseStatus::Emergency);
+        anger_nearby_bees(world, position);
+    }
+
     fn tick(&self, world: &Arc<World>) {
         let block = world.get_block(&self.position);
         if block != &Block::BEEHIVE && block != &Block::BEE_NEST {
@@ -395,7 +416,7 @@ impl BeehiveBlockEntity {
             self.position.to_centered_f64(),
         );
         bee.get_entity().remove();
-        self.mark_chunk_dirty(world);
+        self.set_changed(world);
     }
 
     /// Vanilla `BeehiveBlockEntity.tickOccupants`.
@@ -429,9 +450,14 @@ impl BeehiveBlockEntity {
                     release_status,
                     saved_flower_pos,
                 )
+                .is_some()
             })
             .map(|(index, _)| *index)
             .collect();
+        self.remove_released(world, &released);
+    }
+
+    fn remove_released(&self, world: &Arc<World>, released: &[usize]) {
         if released.is_empty() {
             return;
         }
@@ -441,6 +467,89 @@ impl BeehiveBlockEntity {
             index += 1;
             keep
         });
+        self.set_changed(world);
+    }
+
+    /// Vanilla `isSedated`: smoke from a campfire keeps the bees calm.
+    #[must_use]
+    pub fn is_sedated(&self, world: &World) -> bool {
+        is_smokey_pos(world, &self.position)
+    }
+
+    /// Vanilla `releaseAllOccupants`.
+    fn release_all_occupants(
+        &self,
+        world: &Arc<World>,
+        state_id: pumpkin_data::BlockStateId,
+        release_status: BeeReleaseStatus,
+    ) -> Vec<Arc<dyn EntityBase>> {
+        let saved_flower_pos = *self
+            .flower_pos
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let occupants: Vec<Occupant> = self
+            .lock_stored()
+            .iter()
+            .map(BeeData::to_occupant)
+            .collect();
+        let mut spawned = Vec::new();
+        let mut released = Vec::new();
+        for (index, occupant) in occupants.iter().enumerate() {
+            if let Some(entity) = release_occupant(
+                world,
+                self.position,
+                state_id,
+                occupant,
+                release_status,
+                saved_flower_pos,
+            ) {
+                spawned.push(entity);
+                released.push(index);
+            }
+        }
+        self.remove_released(world, &released);
+        spawned
+    }
+
+    /// Vanilla `emptyAllLivingFromHive`: the bees come out, and the ones near `player` go for them
+    /// unless smoke keeps them calm.
+    pub fn empty_all_living_from_hive(
+        &self,
+        world: &Arc<World>,
+        player: Option<&Arc<Player>>,
+        state_id: pumpkin_data::BlockStateId,
+        release_status: BeeReleaseStatus,
+    ) {
+        let released = self.release_all_occupants(world, state_id, release_status);
+        let Some(player) = player else {
+            return;
+        };
+        let player_pos = player.get_entity().pos.load();
+        for entity in released {
+            let Some(mob) = entity.get_mob() else {
+                continue;
+            };
+            let Some(bee) = mob.cast_any().downcast_ref::<BeeEntity>() else {
+                continue;
+            };
+            if player_pos.squared_distance_to_vec(&entity.get_entity().pos.load()) > 16.0 {
+                continue;
+            }
+            if self.is_sedated(world) {
+                bee.set_stay_out_of_hive_countdown(STAY_OUT_OF_HIVE_WHEN_SEDATED);
+            } else {
+                let target: Arc<dyn EntityBase> = player.clone();
+                mob.set_mob_target(Some(target), TargetReason::ClosestPlayer);
+            }
+        }
+    }
+
+    /// Vanilla `setChanged`: fire next to the hive drives every bee out.
+    fn set_changed(&self, world: &Arc<World>) {
+        if self.is_fire_nearby(world) {
+            let state_id = world.get_block_state_id(&self.position);
+            self.empty_all_living_from_hive(world, None, state_id, BeeReleaseStatus::Emergency);
+        }
         self.mark_chunk_dirty(world);
     }
 
@@ -462,9 +571,9 @@ fn release_occupant(
     occupant: &Occupant,
     release_status: BeeReleaseStatus,
     saved_flower_pos: Option<BlockPos>,
-) -> bool {
+) -> Option<Arc<dyn EntityBase>> {
     if world.bees_stay_in_hive(&hive_pos) && release_status != BeeReleaseStatus::Emergency {
-        return false;
+        return None;
     }
 
     let facing = BeeNestLikeProperties::from_state_id(state_id)
@@ -477,12 +586,10 @@ fn release_occupant(
         .collision_shapes
         .is_empty();
     if front_blocked && release_status != BeeReleaseStatus::Emergency {
-        return false;
+        return None;
     }
 
-    let Some(entity) = occupant.create_entity(world, hive_pos) else {
-        return false;
-    };
+    let entity = occupant.create_entity(world, hive_pos)?;
     if let Some(bee) = entity
         .get_mob()
         .and_then(|mob| mob.cast_any().downcast_ref::<BeeEntity>())
@@ -519,7 +626,40 @@ fn release_occupant(
         &hive_pos.to_centered_f64(),
     );
     world.emit_game_event(GameEvent::BlockChange.name(), hive_pos.to_centered_f64());
-    world.spawn_entity(entity)
+    world.spawn_entity(entity.clone()).then_some(entity)
+}
+
+/// Vanilla `BeehiveBlock.angerNearbyBees`: calm bees around the hive pick one of the nearby
+/// players as their target.
+pub fn anger_nearby_bees(world: &Arc<World>, pos: &BlockPos) {
+    let area = BoundingBox::from_block(pos).expand(8.0, 6.0, 8.0);
+    let bees: Vec<_> = world
+        .get_entities_at_box(&area)
+        .into_iter()
+        .filter(|entity| {
+            entity
+                .get_mob()
+                .is_some_and(|mob| mob.cast_any().is::<BeeEntity>())
+        })
+        .collect();
+    if bees.is_empty() {
+        return;
+    }
+    let players = world.get_players_at_box(&area);
+    if players.is_empty() {
+        return;
+    }
+    let mut random = rng();
+    for bee in bees {
+        let Some(mob) = bee.get_mob() else {
+            continue;
+        };
+        if mob.get_mob_entity().get_target().is_none() {
+            let target: Arc<dyn EntityBase> =
+                players[random.random_range(0..players.len())].clone();
+            mob.set_mob_target(Some(target), TargetReason::ClosestPlayer);
+        }
+    }
 }
 
 /// The honey a bee brings in: one level, or two once in a hundred times, up to the maximum.
@@ -662,6 +802,22 @@ mod tests {
             *hive.flower_pos.lock().map_err(|_| "poisoned")?,
             Some(BlockPos::new(3, 64, 3))
         );
+        world.level.shutdown().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_emergency_empties_the_hive_even_at_night() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let (hive, pos) = hive_with(&world, bee_with_nectar(0), MIDNIGHT);
+        let state_id = world.get_block_state_id(&pos);
+
+        hive.empty_all_living_from_hive(&world, None, state_id, BeeReleaseStatus::Emergency);
+
+        assert!(hive.is_empty());
+        assert_eq!(world.entities.load().len(), 1);
         world.level.shutdown().await;
         Ok(())
     }

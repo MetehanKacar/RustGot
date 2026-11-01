@@ -5457,6 +5457,21 @@ impl World {
         );
     }
 
+    /// Vanilla `Block.playerDestroy` for blocks with a block entity: survival players only.
+    fn on_player_destroy(
+        self: &Arc<Self>,
+        block: &Block,
+        position: &BlockPos,
+        player: &Arc<Player>,
+    ) {
+        if player.gamemode.load() != pumpkin_util::GameMode::Creative
+            && block.default_state.block_entity_type != u16::MAX
+            && let Some(block_entity) = self.get_block_entity(position)
+        {
+            block_entity.on_player_destroy(self, position, player);
+        }
+    }
+
     pub fn break_block(
         self: &Arc<Self>,
         position: &BlockPos,
@@ -5507,6 +5522,10 @@ impl World {
             flags.remove(BlockFlags::SKIP_DROPS);
         } else {
             flags.insert(BlockFlags::SKIP_DROPS);
+        }
+
+        if let Some(player) = cause {
+            self.on_player_destroy(broken_block, position, player);
         }
 
         if !flags.contains(BlockFlags::SKIP_DROPS) {

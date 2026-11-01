@@ -5,6 +5,7 @@ use pumpkin_data::{Block, block_properties::BLOCK_ENTITY_TYPES};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
 
+use crate::entity::player::Player;
 use crate::world::World;
 use pumpkin_data::BlockStateId;
 use pumpkin_inventory::Inventory;
@@ -138,6 +139,10 @@ pub trait BlockEntity: Any + Send + Sync {
     }
 
     fn set_block_state(&mut self, _block_state: BlockStateId) {}
+    /// Vanilla `Block.playerDestroy`: a survival player broke the block this entity belongs to.
+    /// Runs before the block entity is removed.
+    fn on_player_destroy(&self, _world: &Arc<World>, _position: &BlockPos, _player: &Arc<Player>) {}
+
     fn on_block_replaced(self: Arc<Self>, world: &Arc<World>, position: &BlockPos) {
         if let Some(inventory) = self.get_inventory() {
             world.scatter_inventory(position, &inventory);

@@ -8,6 +8,7 @@ use pumpkin_data::{
     recipes::{CookingRecipeKind, get_cooking_recipe_with_ingredient},
 };
 use pumpkin_macros::pumpkin_block_from_tag;
+use pumpkin_util::math::position::BlockPos;
 use pumpkin_world::tick::TickPriority;
 
 use crate::block::entities::campfire::CampfireBlockEntity;
@@ -18,12 +19,49 @@ use crate::{
         registry::BlockActionResult,
     },
     entity::EntityBase,
+    world::World,
 };
 use pumpkin_world::world::BlockFlags;
 use std::sync::Arc;
 
 #[pumpkin_block_from_tag("minecraft:campfires")]
 pub struct CampfireBlock;
+
+/// Vanilla `CampfireBlock.isLitCampfire`.
+#[must_use]
+pub fn is_lit_campfire(block: &Block, state_id: BlockStateId) -> bool {
+    (block == &Block::CAMPFIRE || block == &Block::SOUL_CAMPFIRE)
+        && CampfireLikeProperties::from_state_id(state_id).lit
+}
+
+/// Vanilla `CampfireBlock.isSmokeyPos`: a lit campfire up to five blocks below, with at most one
+/// block that stops smoke in between.
+#[must_use]
+pub fn is_smokey_pos(world: &World, pos: &BlockPos) -> bool {
+    const SMOKE_COLUMN_MIN: f64 = 0.375;
+    const SMOKE_COLUMN_MAX: f64 = 0.625;
+    for i in 1..=5 {
+        let below = BlockPos::new(pos.0.x, pos.0.y - i, pos.0.z);
+        let (block, state_id) = world.get_block_and_state_id(&below);
+        if is_lit_campfire(block, state_id) {
+            return true;
+        }
+        let smoke_blocked = BlockState::from_id(state_id)
+            .get_block_collision_shapes()
+            .any(|shape| {
+                shape.min.x < SMOKE_COLUMN_MAX
+                    && shape.max.x > SMOKE_COLUMN_MIN
+                    && shape.min.z < SMOKE_COLUMN_MAX
+                    && shape.max.z > SMOKE_COLUMN_MIN
+                    && shape.max.y > shape.min.y
+            });
+        if smoke_blocked {
+            let (below_block, below_state_id) = world.get_block_and_state_id(&below.down());
+            return is_lit_campfire(below_block, below_state_id);
+        }
+    }
+    false
+}
 
 impl BlockBehaviour for CampfireBlock {
     fn placed(&self, args: PlacedArgs<'_>) {
