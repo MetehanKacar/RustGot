@@ -50,6 +50,7 @@ const IGNORED_BEE_TAGS: [&str; 25] = [
 
 pub const MAX_OCCUPANTS: usize = 3;
 pub const MIN_OCCUPATION_TICKS_NECTARLESS: i32 = 600;
+pub const MIN_OCCUPATION_TICKS_NECTAR: i32 = 2400;
 const MAX_HONEY_LEVEL: u8 = 5;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -85,6 +86,25 @@ impl Occupant {
                 .or_else(|| nbt.get_int("MinOccupationTicks"))
                 .unwrap_or(MIN_OCCUPATION_TICKS_NECTARLESS),
         })
+    }
+
+    /// Vanilla `Occupant.of`: the bee as it is saved while it waits inside.
+    fn of(bee: &BeeEntity) -> Self {
+        let mut entity_data = NbtCompound::new();
+        EntityBase::write_nbt(bee, &mut entity_data);
+        for tag in IGNORED_BEE_TAGS {
+            entity_data.child_tags.remove(tag);
+        }
+        let min_ticks_in_hive = if entity_data.get_bool("HasNectar").unwrap_or(false) {
+            MIN_OCCUPATION_TICKS_NECTAR
+        } else {
+            MIN_OCCUPATION_TICKS_NECTARLESS
+        };
+        Self {
+            entity_data,
+            ticks_in_hive: 0,
+            min_ticks_in_hive,
+        }
     }
 
     fn to_nbt(&self) -> NbtTag {
@@ -334,6 +354,50 @@ impl BeehiveBlockEntity {
         self.lock_stored().len() == MAX_OCCUPANTS
     }
 
+    /// Vanilla `BeehiveBlockEntity.isFireNearby`.
+    #[must_use]
+    pub fn is_fire_nearby(&self, world: &World) -> bool {
+        (-1..=1).any(|dx| {
+            (-1..=1).any(|dy| {
+                (-1..=1).any(|dz| {
+                    let pos = self.position.offset(Vector3::new(dx, dy, dz));
+                    world.get_block(&pos).id == Block::FIRE.id
+                })
+            })
+        })
+    }
+
+    /// Vanilla `BeehiveBlockEntity.addOccupant`: the bee goes inside and leaves the world.
+    pub fn add_occupant(&self, world: &Arc<World>, bee: &BeeEntity) {
+        let mut stored = self.lock_stored();
+        if stored.len() >= MAX_OCCUPANTS {
+            return;
+        }
+        bee.get_entity().remove_leash();
+        stored.push(BeeData::new(Occupant::of(bee)));
+        drop(stored);
+        if let Some(bee_flower_pos) = bee.saved_flower_pos() {
+            let mut flower_pos = self
+                .flower_pos
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if flower_pos.is_none() || rng().random::<bool>() {
+                *flower_pos = Some(bee_flower_pos);
+            }
+        }
+        world.play_sound(
+            Sound::BlockBeehiveEnter,
+            SoundCategory::Blocks,
+            &self.position.to_centered_f64(),
+        );
+        world.emit_game_event(
+            GameEvent::BlockChange.name(),
+            self.position.to_centered_f64(),
+        );
+        bee.get_entity().remove();
+        self.mark_chunk_dirty(world);
+    }
+
     /// Vanilla `BeehiveBlockEntity.tickOccupants`.
     fn tick_occupants(&self, world: &Arc<World>) {
         let state_id = world.get_block_state_id(&self.position);
@@ -487,7 +551,6 @@ mod tests {
     use super::*;
     use crate::entity::ai::test_support::world;
 
-    const MIN_OCCUPATION_TICKS_NECTAR: i32 = 2400;
     const DAY: i64 = 6000;
     const MIDNIGHT: i64 = 18000;
 
@@ -553,6 +616,51 @@ mod tests {
         assert_eq!(
             BeeNestLikeProperties::from_state_id(world.get_block_state_id(&pos)).honey_level,
             1
+        );
+        world.level.shutdown().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bee_going_back_in_is_stored_as_it_was_and_leaves_the_world()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let (hive, _) = hive_with(
+            &world,
+            bee_with_nectar(MIN_OCCUPATION_TICKS_NECTAR + 1),
+            DAY,
+        );
+        hive.tick(&world);
+        let entity = world
+            .entities
+            .load()
+            .first()
+            .cloned()
+            .ok_or("no bee was released")?;
+        let bee = entity
+            .get_mob()
+            .and_then(|mob| mob.cast_any().downcast_ref::<BeeEntity>())
+            .ok_or("released entity is not a bee")?;
+        bee.set_has_nectar(true);
+        bee.set_saved_flower_pos(BlockPos::new(3, 64, 3));
+
+        hive.add_occupant(&world, bee);
+
+        assert_eq!(hive.get_occupant_count(), 1);
+        assert!(bee.get_entity().is_removed());
+        let (min_ticks_in_hive, has_nectar) = {
+            let stored = hive.lock_stored();
+            (
+                stored[0].occupant.min_ticks_in_hive,
+                stored[0].occupant.has_nectar(),
+            )
+        };
+        assert_eq!(min_ticks_in_hive, MIN_OCCUPATION_TICKS_NECTAR);
+        assert!(has_nectar);
+        assert_eq!(
+            *hive.flower_pos.lock().map_err(|_| "poisoned")?,
+            Some(BlockPos::new(3, 64, 3))
         );
         world.level.shutdown().await;
         Ok(())

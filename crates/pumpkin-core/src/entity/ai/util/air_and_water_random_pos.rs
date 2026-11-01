@@ -15,6 +15,31 @@ pub fn get_pos(
     z_dir: f64,
     max_xz_radians_difference: f64,
 ) -> Option<Vector3<f64>> {
+    get_pos_in_air_or_water(
+        mob,
+        horizontal_dist,
+        vertical_dist,
+        flying_height,
+        x_dir,
+        z_dir,
+        max_xz_radians_difference,
+        false,
+    )
+}
+
+/// [`get_pos`], optionally turning down spots in water like vanilla `AirRandomPos`.
+#[expect(clippy::too_many_arguments, reason = "mirrors the upstream signature")]
+#[must_use]
+pub fn get_pos_in_air_or_water(
+    mob: &dyn Mob,
+    horizontal_dist: i32,
+    vertical_dist: i32,
+    flying_height: i32,
+    x_dir: f64,
+    z_dir: f64,
+    max_xz_radians_difference: f64,
+    avoid_water: bool,
+) -> Option<Vector3<f64>> {
     let restrict = goal_utils::mob_restricted(mob, f64::from(horizontal_dist));
     let world = mob.get_entity().world.load_full();
     let max_y = world.dimension.min_y + world.dimension.height - 1;
@@ -51,6 +76,9 @@ pub fn get_pos(
             let pos = random_pos::move_up_out_of_solid(pos, max_y, |candidate| {
                 goal_utils::is_solid(&world, candidate)
             });
+            if avoid_water && goal_utils::is_water(&world, &pos) {
+                return None;
+            }
             (!goal_utils::has_malus(mob, &mut context, &pos)).then_some(pos)
         },
         |pos| f64::from(mob.get_walk_target_value(pos)),
