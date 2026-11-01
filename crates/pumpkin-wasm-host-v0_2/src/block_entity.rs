@@ -914,13 +914,7 @@ impl HostBeehiveBlockEntity for PluginHostState {
     }
 
     fn get_bee_count(&mut self, res: Resource<BeehiveBlockEntity>) -> wasmtime::Result<u32> {
-        Ok(self
-            .get(&res)?
-            .bees
-            .try_lock()
-            .ok()
-            .and_then(|g| g.as_ref().map(|v| v.len() as u32))
-            .unwrap_or(0))
+        Ok(self.get(&res)?.get_occupant_count() as u32)
     }
 
     fn drop(&mut self, rep: Resource<BeehiveBlockEntity>) -> wasmtime::Result<()> {
