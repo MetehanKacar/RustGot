@@ -1,18 +1,20 @@
 use std::sync::{
     Arc, Mutex, Weak,
-    atomic::{AtomicI32, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering},
 };
 
 use crossbeam::atomic::AtomicCell;
-use pumpkin_data::BlockState;
+use pumpkin_data::block_properties::{DoubleBlockHalf, TallSeagrassLikeProperties};
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::Sound;
 use pumpkin_data::tag::{self, Taggable};
+use pumpkin_data::{Block, BlockState, BlockStateId};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_nbt::tag::NbtTag;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
+use rand::RngExt;
 
 use crate::block::entities::BlockEntity;
 use crate::block::entities::beehive::BeehiveBlockEntity;
@@ -27,6 +29,10 @@ use crate::entity::{
     },
     ai::goal::{
         active_target::TargetCondition,
+        bee_flower::{
+            BeeGoToKnownFlowerGoal, BeeGrowCropGoal, BeePollinateGoal, BeeWanderGoal,
+            ValidateFlowerGoal,
+        },
         bee_hive::{BeeEnterHiveGoal, BeeGoToHiveGoal, BeeLocateHiveGoal, ValidateHiveGoal},
         breed::BreedGoal,
         follow_parent::FollowParentGoal,
@@ -37,7 +43,6 @@ use crate::entity::{
         revenge::RevengeGoal,
         swim::SwimGoal,
         tempt::TemptGoal,
-        wander_around::WanderAroundGoal,
     },
     ai::pathfinder::Navigator,
     ai::util::air_random_pos,
@@ -107,6 +112,8 @@ pub struct BeeEntity {
     pub saved_flower_pos: AtomicCell<Option<BlockPos>>,
     pub hive_pos: AtomicCell<Option<BlockPos>>,
     remaining_cooldown_before_locating_new_hive: AtomicI32,
+    remaining_cooldown_before_locating_new_flower: AtomicI32,
+    pollinating: AtomicBool,
     hive_blacklist: Mutex<Vec<BlockPos>>,
 }
 
@@ -143,6 +150,8 @@ impl BeeEntity {
             saved_flower_pos: AtomicCell::new(None),
             hive_pos: AtomicCell::new(None),
             remaining_cooldown_before_locating_new_hive: AtomicI32::new(0),
+            remaining_cooldown_before_locating_new_flower: AtomicI32::new(0),
+            pollinating: AtomicBool::new(false),
             hive_blacklist: Mutex::new(Vec::new()),
         };
         let mob_arc = Arc::new(bee);
@@ -164,8 +173,12 @@ impl BeeEntity {
             goal_selector.add_goal(3, Box::new(ValidateHiveGoal::new(mob_arc.as_ref())));
             goal_selector.add_goal(5, Box::new(FollowParentGoal::new(1.25)));
             goal_selector.add_goal(5, Box::new(BeeLocateHiveGoal));
+            goal_selector.add_goal(3, Box::new(ValidateFlowerGoal::new(mob_arc.as_ref())));
+            goal_selector.add_goal(4, Box::new(BeePollinateGoal::default()));
             goal_selector.add_goal(5, Box::new(BeeGoToHiveGoal::default()));
-            goal_selector.add_goal(8, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(6, Box::new(BeeGoToKnownFlowerGoal::default()));
+            goal_selector.add_goal(7, Box::new(BeeGrowCropGoal));
+            goal_selector.add_goal(8, Box::new(BeeWanderGoal));
             goal_selector.add_goal(9, Box::new(SwimGoal::default()));
             goal_selector.add_goal(
                 10,
@@ -237,6 +250,46 @@ impl BeeEntity {
     pub fn set_remaining_cooldown_before_locating_new_hive(&self, ticks: i32) {
         self.remaining_cooldown_before_locating_new_hive
             .store(ticks, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn remaining_cooldown_before_locating_new_flower(&self) -> i32 {
+        self.remaining_cooldown_before_locating_new_flower
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn set_remaining_cooldown_before_locating_new_flower(&self, ticks: i32) {
+        self.remaining_cooldown_before_locating_new_flower
+            .store(ticks, Ordering::Relaxed);
+    }
+
+    /// Vanilla `Bee.dropFlower`.
+    pub fn drop_flower(&self) {
+        self.saved_flower_pos.store(None);
+        self.set_remaining_cooldown_before_locating_new_flower(
+            self.get_random().random_range(20..=60),
+        );
+    }
+
+    #[must_use]
+    pub fn is_pollinating(&self) -> bool {
+        self.pollinating.load(Ordering::Relaxed)
+    }
+
+    pub fn set_pollinating(&self, pollinating: bool) {
+        self.pollinating.store(pollinating, Ordering::Relaxed);
+    }
+
+    /// Vanilla `Bee.attractsBees`.
+    #[must_use]
+    pub fn attracts_bees(block: &Block, state_id: BlockStateId) -> bool {
+        if !block.has_tag(&tag::Block::MINECRAFT_BEE_ATTRACTIVE)
+            || state_id.to_state().is_waterlogged()
+        {
+            return false;
+        }
+        block != &Block::SUNFLOWER
+            || TallSeagrassLikeProperties::from_state_id(state_id).half == DoubleBlockHalf::Upper
     }
 
     fn lock_hive_blacklist(&self) -> std::sync::MutexGuard<'_, Vec<BlockPos>> {
@@ -322,6 +375,7 @@ impl BeeEntity {
     #[must_use]
     pub fn wants_to_enter_hive(&self) -> bool {
         if self.cannot_enter_hive_ticks.load(Ordering::Relaxed) > 0
+            || self.is_pollinating()
             || self.has_stung()
             || self.get_mob_entity().get_target().is_some()
         {
@@ -432,6 +486,10 @@ impl BeeEntity {
         }
         if self.remaining_cooldown_before_locating_new_hive() > 0 {
             self.remaining_cooldown_before_locating_new_hive
+                .fetch_sub(1, Ordering::Relaxed);
+        }
+        if self.remaining_cooldown_before_locating_new_flower() > 0 {
+            self.remaining_cooldown_before_locating_new_flower
                 .fetch_sub(1, Ordering::Relaxed);
         }
         let tick_count = self.get_entity().tick_count.load(Ordering::Relaxed);

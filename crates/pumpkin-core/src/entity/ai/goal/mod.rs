@@ -4,6 +4,7 @@ use std::{any::TypeId, ops::BitOr, ptr};
 pub mod active_target;
 pub mod ambient_stand;
 pub mod avoid_entity;
+pub mod bee_flower;
 pub mod bee_hive;
 pub mod beg;
 pub mod blaze_attack;

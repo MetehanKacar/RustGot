@@ -196,3 +196,86 @@ pub fn get_available_moisture(world: &World, pos: &BlockPos, block: &Block) -> f
 
     moisture
 }
+
+/// The state a bee leaves a plant in after its `BeeGrowCropGoal` turn, if the plant can still
+/// grow: one more age, or ripe berries on cave vines.
+#[must_use]
+pub fn bee_growth_state(block: &Block, state_id: BlockStateId) -> Option<BlockStateId> {
+    use pumpkin_data::block_properties::{
+        CaveVinesLikeProperties, CaveVinesPlantLikeProperties, NetherWartLikeProperties,
+        TorchflowerCropLikeProperties,
+    };
+
+    const STEM_AND_CROP_MAX_AGE: u8 = 7;
+    const BEETROOT_AND_BERRY_MAX_AGE: u8 = 3;
+
+    if block == &Block::WHEAT
+        || block == &Block::CARROTS
+        || block == &Block::POTATOES
+        || block == &Block::MELON_STEM
+        || block == &Block::PUMPKIN_STEM
+    {
+        let mut props = CropProperties::from_state_id(state_id);
+        (props.age < STEM_AND_CROP_MAX_AGE).then(|| {
+            props.age += 1;
+            props.to_state_id(block)
+        })
+    } else if block == &Block::BEETROOTS || block == &Block::SWEET_BERRY_BUSH {
+        let mut props = NetherWartLikeProperties::from_state_id(state_id);
+        (props.age < BEETROOT_AND_BERRY_MAX_AGE).then(|| {
+            props.age += 1;
+            props.to_state_id(block)
+        })
+    } else if block == &Block::TORCHFLOWER_CROP {
+        let mut props = TorchflowerCropLikeProperties::from_state_id(state_id);
+        if props.age == 0 {
+            props.age = 1;
+            Some(props.to_state_id(block))
+        } else {
+            Some(Block::TORCHFLOWER.default_state.id)
+        }
+    } else if block == &Block::CAVE_VINES {
+        let mut props = CaveVinesLikeProperties::from_state_id(state_id);
+        (!props.berries).then(|| {
+            props.berries = true;
+            props.to_state_id(block)
+        })
+    } else if block == &Block::CAVE_VINES_PLANT {
+        let mut props = CaveVinesPlantLikeProperties::from_state_id(state_id);
+        (!props.berries).then(|| {
+            props.berries = true;
+            props.to_state_id(block)
+        })
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bees_grow_a_crop_one_age_until_it_is_ripe() {
+        let wheat = |age| {
+            let mut props = CropProperties::default(&Block::WHEAT);
+            props.age = age;
+            props.to_state_id(&Block::WHEAT)
+        };
+        assert_eq!(bee_growth_state(&Block::WHEAT, wheat(3)), Some(wheat(4)));
+        assert_eq!(bee_growth_state(&Block::WHEAT, wheat(7)), None);
+    }
+
+    #[test]
+    fn a_bee_ripens_a_torchflower_crop_into_the_flower() {
+        let mut props = pumpkin_data::block_properties::TorchflowerCropLikeProperties::default(
+            &Block::TORCHFLOWER_CROP,
+        );
+        props.age = 1;
+        let state = props.to_state_id(&Block::TORCHFLOWER_CROP);
+        assert_eq!(
+            bee_growth_state(&Block::TORCHFLOWER_CROP, state),
+            Some(Block::TORCHFLOWER.default_state.id)
+        );
+    }
+}
