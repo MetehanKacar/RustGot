@@ -2739,7 +2739,41 @@ fn build_configured_features()
     map.insert(
         pumpkin_data::configured_feature::ConfiguredFeature::LargeDripstone,
         ConfiguredFeature::LargeDripstone(
-            crate::generation::feature::features::drip_stone::large::LargeDripstoneFeature {},
+            crate::generation::feature::features::drip_stone::large::LargeDripstoneFeature {
+                blocks: crate::generation::feature::features::drip_stone::SpeleothemBlocks {
+                    base: &pumpkin_data::Block::DRIPSTONE_BLOCK,
+                    pointed: &pumpkin_data::Block::POINTED_DRIPSTONE,
+                    replaceable: pumpkin_data::tag::Block::MINECRAFT_DRIPSTONE_REPLACEABLE_BLOCKS,
+                },
+                floor_to_ceiling_search_range: 30i32,
+                column_radius: IntProvider::Object(NormalIntProvider::Clamped(
+                    ClampedIntProvider {
+                        source: Box::new(IntProvider::Object(NormalIntProvider::Uniform(
+                            UniformIntProvider {
+                                min_inclusive: 3i32,
+                                max_inclusive: 19i32,
+                            },
+                        ))),
+                        min_inclusive: 3i32,
+                        max_inclusive: 16i32,
+                    },
+                )),
+                height_scale: FloatProvider::Object(NormalFloatProvider::Uniform(
+                    UniformFloatProvider::new(0.4f32, 2f32),
+                )),
+                max_column_radius_to_cave_height_ratio: 0.33f32,
+                stalactite_bluntness: FloatProvider::Object(NormalFloatProvider::Uniform(
+                    UniformFloatProvider::new(0.3f32, 0.9f32),
+                )),
+                stalagmite_bluntness: FloatProvider::Object(NormalFloatProvider::Uniform(
+                    UniformFloatProvider::new(0.4f32, 1f32),
+                )),
+                wind_speed: FloatProvider::Object(NormalFloatProvider::Uniform(
+                    UniformFloatProvider::new(0f32, 0.3f32),
+                )),
+                min_radius_for_wind: 4i32,
+                min_bluntness_for_wind: 0.6f32,
+            },
         ),
     );
     map.insert(

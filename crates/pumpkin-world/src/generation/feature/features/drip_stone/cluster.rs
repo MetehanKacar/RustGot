@@ -9,7 +9,7 @@ use pumpkin_util::math::int_provider::IntProvider;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::random::{RandomGenerator, RandomImpl};
 
-use super::SpeleothemBlocks;
+use super::{Column, SpeleothemBlocks};
 use crate::generation::proto_chunk::GenerationCache;
 
 pub struct DripstoneClusterFeature {
@@ -25,20 +25,6 @@ pub struct DripstoneClusterFeature {
     pub chance_of_speleothem_at_max_distance_from_center: f32,
     pub max_distance_from_edge_affecting_chance_of_speleothem: i32,
     pub max_distance_from_center_affecting_height_bias: i32,
-}
-
-/// Vanilla `Column`: the floor and/or ceiling bounding an empty vertical run.
-#[derive(Clone, Copy)]
-struct Column {
-    floor: Option<i32>,
-    ceiling: Option<i32>,
-}
-
-impl Column {
-    /// Only a column with both ends has a height (`ceiling - floor - 1`).
-    fn height(self) -> Option<i32> {
-        Some(self.ceiling? - self.floor? - 1)
-    }
 }
 
 impl DripstoneClusterFeature {
@@ -68,7 +54,7 @@ impl DripstoneClusterFeature {
         true
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn place_column<T: GenerationCache>(
         &self,
         chunk: &mut T,
@@ -81,7 +67,13 @@ impl DripstoneClusterFeature {
         cluster_height: i32,
         density: f32,
     ) {
-        let Some(base_column) = self.scan_column(chunk, pos) else {
+        let Some(base_column) = super::scan_column(
+            chunk,
+            pos,
+            self.floor_to_ceiling_search_range,
+            super::is_empty_or_water_id,
+            |id| !super::is_empty_or_water_id(id),
+        ) else {
             return;
         };
         let ceiling = base_column.ceiling;
@@ -181,27 +173,6 @@ impl DripstoneClusterFeature {
                 &self.blocks,
             );
         }
-    }
-
-    /// Vanilla `Column.scan` with `isEmptyOrWater` inside and `isNeitherEmptyNorWater` edges.
-    fn scan_column<T: GenerationCache>(&self, chunk: &T, pos: BlockPos) -> Option<Column> {
-        if !super::is_empty_or_water(chunk, pos) {
-            return None;
-        }
-        let scan = |direction: i32| {
-            let mut y = pos.0.y;
-            let mut i = 1;
-            while i < self.floor_to_ceiling_search_range
-                && super::is_empty_or_water(chunk, at_y(pos, y))
-            {
-                y += direction;
-                i += 1;
-            }
-            (!super::is_empty_or_water(chunk, at_y(pos, y))).then_some(y)
-        };
-        let ceiling = scan(1);
-        let floor = scan(-1);
-        Some(Column { floor, ceiling })
     }
 
     fn speleothem_height(

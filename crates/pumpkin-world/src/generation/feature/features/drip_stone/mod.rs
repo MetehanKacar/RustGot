@@ -50,13 +50,67 @@ pub(super) fn place_base_block_if_possible<T: GenerationCache>(
     false
 }
 
-/// Vanilla `SpeleothemUtils.isEmptyOrWater`.
+/// Vanilla `SpeleothemUtils.isEmptyOrWater` on a block id (`isAir` or water).
+pub(super) fn is_empty_or_water_id(id: BlockId) -> bool {
+    id == BlockId::AIR || id == BlockId::CAVE_AIR || id == BlockId::VOID_AIR || id == BlockId::WATER
+}
+
+/// Vanilla `SpeleothemUtils.isEmptyOrWaterOrLava` on a block id.
+pub(super) fn is_empty_or_water_or_lava_id(id: BlockId) -> bool {
+    is_empty_or_water_id(id) || id == BlockId::LAVA
+}
+
 pub(super) fn is_empty_or_water<T: GenerationCache>(chunk: &T, pos: BlockPos) -> bool {
-    let block = GenerationCache::get_block_state(chunk, &pos.0).to_block_id();
-    block == BlockId::AIR
-        || block == BlockId::CAVE_AIR
-        || block == BlockId::VOID_AIR
-        || block == BlockId::WATER
+    is_empty_or_water_id(GenerationCache::get_block_state(chunk, &pos.0).to_block_id())
+}
+
+pub(super) fn is_empty_or_water_or_lava<T: GenerationCache>(chunk: &T, pos: BlockPos) -> bool {
+    is_empty_or_water_or_lava_id(GenerationCache::get_block_state(chunk, &pos.0).to_block_id())
+}
+
+/// Vanilla `Column`: the floor and/or ceiling bounding a run of blocks.
+#[derive(Clone, Copy)]
+pub(super) struct Column {
+    pub floor: Option<i32>,
+    pub ceiling: Option<i32>,
+}
+
+impl Column {
+    /// Only a column with both ends has a height (`ceiling - floor - 1`).
+    pub(super) fn height(self) -> Option<i32> {
+        Some(self.ceiling? - self.floor? - 1)
+    }
+}
+
+/// Vanilla `Column.scan`: walk up and down from `pos` while `inside` holds, for at most
+/// `search_range` steps, and report an end when the block it stops on satisfies `valid_edge`.
+pub(super) fn scan_column<T: GenerationCache>(
+    chunk: &T,
+    pos: BlockPos,
+    search_range: i32,
+    inside: impl Fn(BlockId) -> bool,
+    valid_edge: impl Fn(BlockId) -> bool,
+) -> Option<Column> {
+    let id_at = |y: i32| {
+        GenerationCache::get_block_state(chunk, &BlockPos::new(pos.0.x, y, pos.0.z).0)
+            .to_block_id()
+    };
+    if !inside(id_at(pos.0.y)) {
+        return None;
+    }
+    let scan = |step: i32| {
+        let mut y = pos.0.y;
+        let mut i = 1;
+        while i < search_range && inside(id_at(y)) {
+            y += step;
+            i += 1;
+        }
+        valid_edge(id_at(y)).then_some(y)
+    };
+    Some(Column {
+        ceiling: scan(1),
+        floor: scan(-1),
+    })
 }
 
 /// Vanilla `SpeleothemUtils.growSpeleothem`: builds base-to-tip from `start_pos` towards
