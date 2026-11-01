@@ -3,12 +3,14 @@ use std::sync::{
     atomic::{AtomicI32, AtomicU8, Ordering},
 };
 
+use crossbeam::atomic::AtomicCell;
 use pumpkin_data::BlockState;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::Sound;
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_nbt::tag::NbtTag;
 use pumpkin_util::math::position::BlockPos;
 
 use crate::entity::ai::behavior::hunting::{self, Hunt};
@@ -42,6 +44,20 @@ pub const FLAG_HAS_NECTAR: u8 = 8;
 /// Vanilla `Bee.TICKS_PER_FLAP`, `Mth.ceil(1.4959966F)`.
 const TICKS_PER_FLAP: i32 = 2;
 
+/// Vanilla `BlockPos.CODEC`: an `[x, y, z]` int array.
+fn put_block_pos(nbt: &mut NbtCompound, key: &str, pos: Option<BlockPos>) {
+    if let Some(pos) = pos {
+        nbt.put(key, NbtTag::IntArray(vec![pos.0.x, pos.0.y, pos.0.z]));
+    }
+}
+
+fn get_block_pos(nbt: &NbtCompound, key: &str) -> Option<BlockPos> {
+    match nbt.get_int_array(key)? {
+        [x, y, z] => Some(BlockPos::new(*x, *y, *z)),
+        _ => None,
+    }
+}
+
 fn is_angry(mob: &dyn Mob) -> bool {
     mob.as_neutral().is_some_and(NeutralMob::is_angry)
 }
@@ -68,6 +84,8 @@ pub struct BeeEntity {
     pub cannot_enter_hive_ticks: AtomicI32,
     pub crops_grown_since_pollination: AtomicI32,
     pub time_since_sting: AtomicI32,
+    pub saved_flower_pos: AtomicCell<Option<BlockPos>>,
+    pub hive_pos: AtomicCell<Option<BlockPos>>,
 }
 
 impl BeeEntity {
@@ -100,6 +118,8 @@ impl BeeEntity {
             cannot_enter_hive_ticks: AtomicI32::new(0),
             crops_grown_since_pollination: AtomicI32::new(0),
             time_since_sting: AtomicI32::new(0),
+            saved_flower_pos: AtomicCell::new(None),
+            hive_pos: AtomicCell::new(None),
         };
         let mob_arc = Arc::new(bee);
         let mob_weak: Weak<dyn Mob> = {
@@ -160,6 +180,35 @@ impl BeeEntity {
             pumpkin_data::tracked_data::bee::DATA_FLAGS_ID,
             new_flags as i8,
         );
+    }
+
+    #[must_use]
+    pub fn saved_flower_pos(&self) -> Option<BlockPos> {
+        self.saved_flower_pos.load()
+    }
+
+    #[must_use]
+    pub fn has_saved_flower_pos(&self) -> bool {
+        self.saved_flower_pos.load().is_some()
+    }
+
+    pub fn set_saved_flower_pos(&self, pos: BlockPos) {
+        self.saved_flower_pos.store(Some(pos));
+    }
+
+    pub fn set_hive_pos(&self, pos: BlockPos) {
+        self.hive_pos.store(Some(pos));
+    }
+
+    pub fn set_stay_out_of_hive_countdown(&self, ticks: i32) {
+        self.cannot_enter_hive_ticks.store(ticks, Ordering::Relaxed);
+    }
+
+    /// Vanilla `Bee.dropOffNectar`.
+    pub fn drop_off_nectar(&self) {
+        self.set_has_nectar(false);
+        self.crops_grown_since_pollination
+            .store(0, Ordering::Relaxed);
     }
 
     #[must_use]
@@ -271,6 +320,8 @@ impl Mob for BeeEntity {
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         self.write_ageable_nbt(nbt);
+        put_block_pos(nbt, "hive_pos", self.hive_pos.load());
+        put_block_pos(nbt, "flower_pos", self.saved_flower_pos.load());
         nbt.put_bool("HasNectar", self.has_nectar());
         nbt.put_bool("HasStung", self.has_stung());
         nbt.put_int(
@@ -289,6 +340,9 @@ impl Mob for BeeEntity {
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
         self.read_ageable_nbt(nbt);
+        self.hive_pos.store(get_block_pos(nbt, "hive_pos"));
+        self.saved_flower_pos
+            .store(get_block_pos(nbt, "flower_pos"));
         if let Some(nectar) = nbt.get_bool("HasNectar") {
             self.set_has_nectar(nectar);
         }
