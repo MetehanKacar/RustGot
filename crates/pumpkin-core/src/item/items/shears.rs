@@ -8,6 +8,7 @@ use crate::entity::item::ItemEntity;
 use crate::entity::player::Player;
 use crate::item::{ItemBehaviour, ItemMetadata};
 use crate::server::Server;
+use crate::world::loot::{LootContextParameters, generate_loot_from_handle};
 use pumpkin_data::BlockId;
 use pumpkin_data::block_properties::BeeNestLikeProperties;
 use pumpkin_data::block_properties::BlockProperties;
@@ -18,10 +19,11 @@ use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::{Sound, SoundCategory};
-use pumpkin_data::{Block, BlockDirection, BlockStateId};
+use pumpkin_data::{Block, BlockDirection, BlockState, BlockStateId};
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::world::BlockFlags;
+use rand::RngExt;
 
 pub struct ShearsItem;
 
@@ -121,7 +123,22 @@ fn handle_beehive(
         return false;
     }
 
-    let mut drops = vec![ItemStack::new(3, &Item::HONEYCOMB)];
+    let world = player.world();
+    // Vanilla `BeehiveBlock.dropHoneycomb`: the `harvest/beehive` block interaction loot table.
+    let mut drops = world
+        .get_loot_table("minecraft:harvest/beehive")
+        .map(|table| {
+            let params = LootContextParameters {
+                world: Some(&world),
+                block_state: Some(BlockState::from_id(state_id)),
+                position: Some(location.to_centered_f64()),
+                this_entity: Some(player),
+                tool: Some(item.clone()),
+                ..Default::default()
+            };
+            generate_loot_from_handle(&table, rand::rng().random(), &params)
+        })
+        .unwrap_or_default();
     if let Some(player_arc) = player.world().get_player_by_uuid(player.gameprofile.id)
         && let Some(server) = player.world().server.upgrade()
     {
@@ -139,25 +156,19 @@ fn handle_beehive(
         drops = event.harvested_items;
     }
 
-    let world = player.world();
-    harvest_hive(&world, block, state_id, location, player);
+    for drop_item in drops {
+        world.drop_stack(location, drop_item);
+    }
     world.play_sound(
         Sound::BlockBeehiveShear,
         SoundCategory::Blocks,
-        &location.to_f64(),
+        &player.position(),
     );
-
-    let drop_pos = location.to_centered_f64();
-    for drop_item in drops {
-        let item_entity = Arc::new(ItemEntity::new(
-            Entity::new(world.clone(), drop_pos, &EntityType::ITEM),
-            drop_item,
-        ));
-        world.spawn_entity(item_entity);
-    }
     if player.gamemode.load() != pumpkin_util::GameMode::Creative {
         let _ = item.damage_item(1);
     }
+    world.emit_game_event(GameEvent::Shear.name(), location.to_centered_f64());
+    harvest_hive(&world, block, state_id, location, player);
     true
 }
 
