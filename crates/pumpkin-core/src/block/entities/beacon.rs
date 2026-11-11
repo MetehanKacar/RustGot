@@ -319,7 +319,7 @@ impl BlockEntity for BeaconBlockEntity {
 
     fn tick(&self, world: &Arc<World>) {
         // Check properties every 80 ticks matching Java
-        if world.get_time_of_day() % 80 == 0 {
+        if world.get_world_age() % 80 == 0 {
             let levels = self.update_base(world);
             self.levels.store(levels, Ordering::Relaxed);
 
