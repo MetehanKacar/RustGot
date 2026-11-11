@@ -421,6 +421,11 @@ impl LocationPredicate {
         {
             return false;
         }
+        // Live chunks do not keep structure starts yet, so "inside this structure" cannot be
+        // answered; failing keeps structure advancements from completing anywhere.
+        if self.structure.is_some() {
+            return false;
+        }
         true
     }
 
@@ -2196,6 +2201,28 @@ mod tests {
 
         let empty_inv = [];
         assert!(!matches_inventory_condition(&cond, &empty_inv, 0, 36, 0));
+    }
+
+    /// Vanilla `nether/find_fortress` must not complete just by standing anywhere.
+    #[test]
+    fn structure_location_does_not_match_outside_a_structure() {
+        let pred = LocationPredicate::from_value(&json!({
+            "player": {
+                "type": "minecraft:entity_properties",
+                "entity": "this",
+                "predicate": {"minecraft:location": {"structures": "minecraft:fortress"}}
+            }
+        }));
+        assert!(!pred.matches(
+            (0.0, 64.0, 0.0),
+            Some("minecraft:plains"),
+            Some("minecraft:overworld"),
+            Some("grass_block"),
+            None,
+            None,
+            Some("grass_block"),
+            None,
+        ));
     }
 
     #[test]
