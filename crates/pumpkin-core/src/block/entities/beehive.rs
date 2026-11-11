@@ -273,6 +273,29 @@ impl BlockEntity for BeehiveBlockEntity {
         anger_nearby_bees(world, position);
     }
 
+    /// Vanilla `BeehiveBlock.getDrops`: TNT, creepers and withers blow the bees out.
+    fn on_explosion_drop(
+        &self,
+        world: &Arc<World>,
+        source_type: Option<&'static pumpkin_data::entity::EntityType>,
+    ) {
+        use pumpkin_data::entity::EntityType;
+        let releases_bees = source_type.is_some_and(|source| {
+            [
+                &EntityType::TNT,
+                &EntityType::CREEPER,
+                &EntityType::WITHER_SKULL,
+                &EntityType::WITHER,
+                &EntityType::TNT_MINECART,
+            ]
+            .contains(&source)
+        });
+        if releases_bees {
+            let state_id = world.get_block_state_id(&self.position);
+            self.empty_all_living_from_hive(world, None, state_id, BeeReleaseStatus::Emergency);
+        }
+    }
+
     fn tick(&self, world: &Arc<World>) {
         let block = world.get_block(&self.position);
         if block != &Block::BEEHIVE && block != &Block::BEE_NEST {
@@ -819,6 +842,48 @@ mod tests {
         assert!(hive.is_empty());
         assert_eq!(world.entities.load().len(), 1);
         world.level.shutdown().await;
+        Ok(())
+    }
+
+    /// Blows up a hive holding one bee at night, so only an emergency lets the bee out.
+    async fn bees_out_after_explosion(
+        source: &'static pumpkin_data::entity::EntityType,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let (hive, pos) = hive_with(&world, bee_with_nectar(0), MIDNIGHT);
+        world.add_block_entity(Arc::new(hive));
+
+        world.explode_by(
+            source,
+            pos.to_centered_f64(),
+            4.0,
+            crate::world::ExplosionInteraction::Tnt,
+        );
+
+        let bees = world
+            .entities
+            .load()
+            .iter()
+            .filter(|entity| {
+                entity.get_entity().entity_type == &pumpkin_data::entity::EntityType::BEE
+            })
+            .count();
+        world.level.shutdown().await;
+        Ok(bees)
+    }
+
+    #[tokio::test]
+    async fn tnt_blows_the_bees_out_of_a_hive_but_a_fireball_does_not()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            bees_out_after_explosion(&pumpkin_data::entity::EntityType::TNT).await?,
+            1
+        );
+        assert_eq!(
+            bees_out_after_explosion(&pumpkin_data::entity::EntityType::FIREBALL).await?,
+            0
+        );
         Ok(())
     }
 

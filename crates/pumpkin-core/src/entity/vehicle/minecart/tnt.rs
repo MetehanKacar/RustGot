@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use crossbeam::atomic::AtomicCell;
-use pumpkin_data::entity::EntityStatus;
+use pumpkin_data::entity::{EntityStatus, EntityType};
 use pumpkin_data::particle::Particle;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_nbt::compound::NbtCompound;
@@ -94,7 +94,12 @@ impl TntMinecart {
         if primed {
             world.explode_tnt_minecart(pos, power);
         } else {
-            world.explode(pos, power, crate::world::ExplosionInteraction::Tnt);
+            world.explode_by(
+                &EntityType::TNT_MINECART,
+                pos,
+                power,
+                crate::world::ExplosionInteraction::Tnt,
+            );
         }
     }
 

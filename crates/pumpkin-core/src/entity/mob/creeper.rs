@@ -111,7 +111,8 @@ impl CreeperEntity {
             .store(true, Ordering::Relaxed);
         let world = entity.world.load();
         let pos = entity.pos.load();
-        world.explode(
+        world.explode_by(
+            &EntityType::CREEPER,
             pos,
             radius * multiplier,
             crate::world::ExplosionInteraction::Mob,

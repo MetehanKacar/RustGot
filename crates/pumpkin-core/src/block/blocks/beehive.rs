@@ -4,7 +4,8 @@ use crate::block::blocks::campfire::is_smokey_pos;
 use crate::block::entities::beehive::{BeeReleaseStatus, BeehiveBlockEntity, anger_nearby_bees};
 use crate::block::registry::BlockActionResult;
 use crate::block::{
-    BlockBehaviour, BlockMetadata, GetComparatorOutputArgs, OnPlaceArgs, UseWithItemArgs,
+    BlockBehaviour, BlockMetadata, ExplodeArgs, GetComparatorOutputArgs, OnPlaceArgs,
+    UseWithItemArgs,
 };
 use crate::entity::EntityBase;
 use crate::entity::player::Player;
@@ -99,6 +100,11 @@ impl BlockBehaviour for BeehiveBlock {
         );
         harvest_hive(args.world, args.block, state_id, args.position, player);
         BlockActionResult::Success
+    }
+
+    /// Vanilla `BeehiveBlock.onExplosionHit`.
+    fn explode(&self, args: ExplodeArgs<'_>) {
+        anger_nearby_bees(args.world, args.position);
     }
 
     fn get_comparator_output(&self, args: GetComparatorOutputArgs<'_>) -> Option<u8> {

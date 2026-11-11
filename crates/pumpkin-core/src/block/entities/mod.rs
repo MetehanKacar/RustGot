@@ -143,6 +143,15 @@ pub trait BlockEntity: Any + Send + Sync {
     /// Runs before the block entity is removed.
     fn on_player_destroy(&self, _world: &Arc<World>, _position: &BlockPos, _player: &Arc<Player>) {}
 
+    /// Vanilla `getDrops` with a `BLOCK_ENTITY` parameter: an explosion is about to drop this
+    /// block. `source_type` is the entity that exploded, if any. Runs before the entity is removed.
+    fn on_explosion_drop(
+        &self,
+        _world: &Arc<World>,
+        _source_type: Option<&'static pumpkin_data::entity::EntityType>,
+    ) {
+    }
+
     fn on_block_replaced(self: Arc<Self>, world: &Arc<World>, position: &BlockPos) {
         if let Some(inventory) = self.get_inventory() {
             world.scatter_inventory(position, &inventory);

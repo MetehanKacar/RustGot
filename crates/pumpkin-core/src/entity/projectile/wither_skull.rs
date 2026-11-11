@@ -1,7 +1,9 @@
 use crate::entity::projectile::owner::ProjectileOwner;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use pumpkin_data::{damage::DamageType, effect::StatusEffect, potion::Effect, tracked_data};
+use pumpkin_data::{
+    damage::DamageType, effect::StatusEffect, entity::EntityType, potion::Effect, tracked_data,
+};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::{Difficulty, math::vector3::Vector3};
 
@@ -149,6 +151,11 @@ impl EntityBase for WitherSkullEntity {
         }
 
         let hit_pos = hit.hit_pos();
-        world.explode(hit_pos, 1.0, ExplosionInteraction::Mob);
+        world.explode_by(
+            &EntityType::WITHER_SKULL,
+            hit_pos,
+            1.0,
+            ExplosionInteraction::Mob,
+        );
     }
 }

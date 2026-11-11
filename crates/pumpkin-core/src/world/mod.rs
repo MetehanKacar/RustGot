@@ -3911,9 +3911,25 @@ impl World {
         self.run_explosion(&explosion, position, power);
     }
 
+    /// [`Self::explode`] caused directly by an entity of `source_type`.
+    pub fn explode_by(
+        self: &Arc<Self>,
+        source_type: &'static EntityType,
+        position: Vector3<f64>,
+        power: f32,
+        interaction: ExplosionInteraction,
+    ) {
+        let block_interaction = self.get_block_interaction(interaction);
+        let explosion =
+            Explosion::new(power, position, block_interaction).with_source_type(source_type);
+        self.run_explosion(&explosion, position, power);
+    }
+
     pub fn explode_tnt_minecart(self: &Arc<Self>, position: Vector3<f64>, power: f32) {
         let block_interaction = self.get_block_interaction(ExplosionInteraction::Tnt);
-        let explosion = Explosion::new(power, position, block_interaction).preserving_rails();
+        let explosion = Explosion::new(power, position, block_interaction)
+            .preserving_rails()
+            .with_source_type(&EntityType::TNT_MINECART);
         self.run_explosion(&explosion, position, power);
     }
 

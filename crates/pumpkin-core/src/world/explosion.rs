@@ -190,6 +190,8 @@ pub struct Explosion {
     block_interaction: BlockInteraction,
     damage_calculator: Option<Arc<dyn ExplosionDamageCalculator>>,
     preserve_rails: bool,
+    /// Vanilla `getDirectSourceEntity`, by type: some blocks react to what blew them up.
+    source_type: Option<&'static EntityType>,
 }
 
 impl Explosion {
@@ -201,6 +203,7 @@ impl Explosion {
             block_interaction,
             damage_calculator: None,
             preserve_rails: false,
+            source_type: None,
         }
     }
 
@@ -210,6 +213,12 @@ impl Explosion {
         calculator: Arc<dyn ExplosionDamageCalculator>,
     ) -> Self {
         self.damage_calculator = Some(calculator);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_source_type(mut self, source_type: &'static EntityType) -> Self {
+        self.source_type = Some(source_type);
         self
     }
 
@@ -558,6 +567,11 @@ impl Explosion {
                             ..Default::default()
                         };
                         drop_loot(world, block, pos, false, &params);
+                        if block.default_state.block_entity_type != u16::MAX
+                            && let Some(block_entity) = world.get_block_entity(pos)
+                        {
+                            block_entity.on_explosion_drop(world, self.source_type);
+                        }
                     }
 
                     world.set_block_state(pos, BlockStateId::AIR, BlockFlags::NOTIFY_ALL);
