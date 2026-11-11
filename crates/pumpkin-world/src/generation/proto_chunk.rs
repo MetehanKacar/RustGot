@@ -98,6 +98,10 @@ pub trait GenerationCache: HeightLimitView + BlockAccessor {
         chunk_x: i32,
         chunk_z: i32,
     ) -> Option<&crate::generation::blender::blending_data::BlendingData>;
+    /// Vanilla `WorldGenLevel.getSeed`.
+    fn world_seed(&self) -> u64 {
+        self.get_center_chunk().world_seed
+    }
     fn get_sea_level(&self) -> i32 {
         self.get_center_chunk().get_sea_level()
     }
@@ -150,6 +154,8 @@ pub struct ProtoChunk {
     pub z: i32,
     pub default_block: &'static BlockState,
     biome_mixer_seed: i64,
+    /// Vanilla `WorldGenLevel.getSeed`.
+    pub world_seed: u64,
     pub(crate) flat_block_map: Vec<BlockStateId>,
     pub flat_biome_map: Box<[u8]>,
     pub flat_surface_height_map: [i16; CHUNK_AREA],
@@ -256,6 +262,7 @@ impl ProtoChunk {
             z,
             default_block,
             biome_mixer_seed,
+            world_seed: generator.seed(),
             flat_block_map: Vec::new(),
             flat_biome_map: vec![
                 Biome::PLAINS.id;
