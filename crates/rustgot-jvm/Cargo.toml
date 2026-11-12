@@ -1,0 +1,29 @@
+[package]
+name = "rustgot-jvm"
+description = "Embedded JVM that runs Paper/Bukkit Java plugins for RustGot."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rustgot-config.workspace = true
+pumpkin-auth.workspace = true
+
+# `invocation` loads libjvm at runtime through `JavaVM::with_libjvm`, so no JDK is needed to build.
+jni = { version = "0.22.4", default-features = false, features = ["invocation"] }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_norway = "0.9.42"
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "rt", "sync", "time"] }
+tracing.workspace = true
+zip.workspace = true
+flate2.workspace = true
+tar = { version = "0.4.46", default-features = false }
+
+[lints]
+workspace = true

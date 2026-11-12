@@ -78,6 +78,28 @@ impl Default for JvmConfig {
     }
 }
 
+const AUTO_HEAP_BASE_MB: u32 = 256;
+const AUTO_HEAP_PER_PLUGIN_MB: u32 = 64;
+const AUTO_HEAP_MAX_MB: u32 = 2048;
+
+impl JvmConfig {
+    /// Maximum JVM heap in MiB for `plugins` Java plugins.
+    ///
+    /// The automatic default is 256 MiB plus 64 MiB per plugin, capped at 2 GiB. The JVM only
+    /// takes memory from the OS as its heap grows, so this is a limit, not a cost.
+    #[must_use]
+    pub fn max_heap_mb_for(&self, plugins: usize) -> u32 {
+        match self.max_heap_mb {
+            0 => u32::try_from(plugins)
+                .unwrap_or(u32::MAX)
+                .saturating_mul(AUTO_HEAP_PER_PLUGIN_MB)
+                .saturating_add(AUTO_HEAP_BASE_MB)
+                .min(AUTO_HEAP_MAX_MB),
+            mb => mb,
+        }
+    }
+}
+
 impl RustGotConfig {
     /// Loads `rustgot.yml` from `dir`, writing a default file if it does not exist
     /// and filling in any missing keys. Falls back to defaults on parse errors.
