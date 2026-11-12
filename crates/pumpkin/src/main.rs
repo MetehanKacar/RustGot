@@ -30,13 +30,14 @@ use pumpkin_core::{
 use pumpkin_core::{PumpkinServer, stop_server};
 
 use pumpkin_config::{LoadConfiguration, PumpkinConfig};
-use rustgot_config::RustGotConfig;
 use pumpkin_core::plugin::loader::PluginLoader;
 use pumpkin_util::text::{
     TextComponent,
     color::{Color, NamedColor},
 };
 use pumpkin_wasm_host::WasmPluginLoader;
+use rustgot_config::RustGotConfig;
+use rustgot_purpur::PurpurConfig;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
@@ -75,12 +76,18 @@ async fn main() {
     let rustgot_config = RustGotConfig::load(&exec_dir);
 
     if has_init_settings_arg(std::env::args().skip(1)) {
+        let _ = PurpurConfig::load(&exec_dir, &config.basic.default_level_name);
         exit(0);
     }
 
     let vanilla_data = VanillaData::load();
 
     pumpkin_core::init_logger(&config.advanced);
+    // After the logger, so the list of ignored settings is shown.
+    rustgot_purpur::init(PurpurConfig::load(
+        &exec_dir,
+        &config.basic.default_level_name,
+    ));
 
     if let Some(target_arg) = parse_convert_world_arg(std::env::args().skip(1)) {
         let anvil_default = match &config.advanced.world.chunk {
@@ -250,6 +257,17 @@ async fn main() {
             TextComponent::text(String::new()).to_pretty_console()
         }
     );
+
+    // Purpur runs these right after its "Done" line.
+    let server = &pumpkin_server.server;
+    for command in &rustgot_purpur::get().settings.startup_commands {
+        info!("Running startup command from purpur.yml: {command}");
+        let source = pumpkin_core::command::CommandSender::Console.into_source(server);
+        server
+            .command_dispatcher
+            .load()
+            .handle_command(&source, command);
+    }
 
     pumpkin_server.start().await;
 
