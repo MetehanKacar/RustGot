@@ -19,7 +19,11 @@ pub struct CactusBlock;
 
 impl BlockBehaviour for CactusBlock {
     fn on_scheduled_tick(&self, args: OnScheduledTickArgs<'_>) {
-        if !can_place_at(args.world.as_ref(), args.position) {
+        if !can_place_at(
+            args.world.as_ref(),
+            args.position,
+            breaks_from_solid_neighbors(args.world),
+        ) {
             args.world
                 .break_block(args.position, None, BlockFlags::NOTIFY_ALL);
         }
@@ -39,7 +43,13 @@ impl BlockBehaviour for CactusBlock {
                 }
             }
 
-            if age == 8 && can_place_at(args.world.as_ref(), &block_up) {
+            if age == 8
+                && can_place_at(
+                    args.world.as_ref(),
+                    &block_up,
+                    breaks_from_solid_neighbors(args.world),
+                )
+            {
                 let d = if i >= 3 { 0.25 } else { 0.1 };
                 if rand::rng().random_range(0.0..1.0) <= d {
                     args.world.set_block_state(
@@ -83,7 +93,11 @@ impl BlockBehaviour for CactusBlock {
         &self,
         args: GetStateForNeighborUpdateArgs<'_>,
     ) -> BlockStateId {
-        if !can_place_at(args.world, args.position) {
+        if !can_place_at(
+            args.world,
+            args.position,
+            breaks_from_solid_neighbors(args.world),
+        ) {
             args.world
                 .schedule_block_tick(args.block, *args.position, 1, TickPriority::Normal);
         }
@@ -92,7 +106,11 @@ impl BlockBehaviour for CactusBlock {
     }
 
     fn can_place_at(&self, args: CanPlaceAtArgs<'_>) -> bool {
-        can_place_at(args.block_accessor, args.position)
+        can_place_at(
+            args.block_accessor,
+            args.position,
+            args.world.is_none_or(breaks_from_solid_neighbors),
+        )
     }
 
     fn is_pathfindable(&self, _state: &BlockState, _computation_type: PathComputationType) -> bool {
@@ -100,10 +118,18 @@ impl BlockBehaviour for CactusBlock {
     }
 }
 
-fn can_place_at(world: &dyn BlockAccessor, block_pos: &BlockPos) -> bool {
+fn breaks_from_solid_neighbors(world: &World) -> bool {
+    world.purpur().blocks.cactus_breaks_from_solid_neighbors
+}
+
+fn can_place_at(
+    world: &dyn BlockAccessor,
+    block_pos: &BlockPos,
+    breaks_from_solid_neighbors: bool,
+) -> bool {
     for direction in BlockDirection::horizontal() {
         let state = world.get_block_state(&block_pos.offset(direction.to_offset()));
-        if state.is_solid()
+        if (breaks_from_solid_neighbors && state.is_solid())
             || World::get_fluid_from_state_id(state.id).has_tag(&tag::Fluid::MINECRAFT_LAVA)
         {
             return false;

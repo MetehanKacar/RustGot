@@ -11,6 +11,9 @@ pub mod coral_fan;
 pub mod coral_plant;
 
 pub fn scan_for_water(world: &World, pos: &BlockPos) -> bool {
+    if !world.purpur().blocks.coral_die_outside_water {
+        return true;
+    }
     for direction in BlockDirection::all() {
         let neighbor_pos = pos.offset(direction.to_offset());
         let block = world.get_fluid(&neighbor_pos);
