@@ -91,8 +91,53 @@ impl SpawnLevel for World {
     fn world_surface_height(&self, x: i32, z: i32) -> i32 {
         self.get_heightmap_height(ChunkHeightmapType::WorldSurface, x, z)
     }
+    // Vanilla `getNearestPlayer(..., EntitySelector.NO_SPECTATORS)`: spectators do not count.
     fn is_player_within(&self, pos: Vector3<f64>, radius: f64) -> bool {
-        self.get_closest_player(pos, radius).is_some()
+        self.get_nearest_player(pos, radius, |player| !player.is_spectator())
+            .is_some()
+    }
+}
+
+/// Spawn rules are often called with the world handle callers already hold.
+impl SpawnLevel for std::sync::Arc<World> {
+    fn get_block(&self, pos: &BlockPos) -> &'static Block {
+        SpawnLevel::get_block(&**self, pos)
+    }
+    fn get_block_state(&self, pos: &BlockPos) -> &'static BlockState {
+        SpawnLevel::get_block_state(&**self, pos)
+    }
+    fn get_fluid(&self, pos: &BlockPos) -> &'static Fluid {
+        SpawnLevel::get_fluid(&**self, pos)
+    }
+    fn get_biome(&self, pos: &BlockPos) -> &'static Biome {
+        SpawnLevel::get_biome(&**self, pos)
+    }
+    fn get_sky_light_level(&self, pos: &BlockPos) -> u8 {
+        SpawnLevel::get_sky_light_level(&**self, pos)
+    }
+    fn get_block_light_level(&self, pos: &BlockPos) -> Option<u8> {
+        SpawnLevel::get_block_light_level(&**self, pos)
+    }
+    fn get_sky_darken(&self) -> i32 {
+        SpawnLevel::get_sky_darken(&**self)
+    }
+    fn sea_level(&self) -> i32 {
+        SpawnLevel::sea_level(&**self)
+    }
+    fn dimension(&self) -> &Dimension {
+        SpawnLevel::dimension(&**self)
+    }
+    fn difficulty(&self) -> Difficulty {
+        SpawnLevel::difficulty(&**self)
+    }
+    fn seed(&self) -> u64 {
+        SpawnLevel::seed(&**self)
+    }
+    fn world_surface_height(&self, x: i32, z: i32) -> i32 {
+        SpawnLevel::world_surface_height(&**self, x, z)
+    }
+    fn is_player_within(&self, pos: Vector3<f64>, radius: f64) -> bool {
+        SpawnLevel::is_player_within(&**self, pos, radius)
     }
 }
 

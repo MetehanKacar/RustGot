@@ -7,7 +7,6 @@ use crossbeam::atomic::AtomicCell;
 use pumpkin_data::block_properties::{DoubleBlockHalf, TallSeagrassLikeProperties};
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item_stack::ItemStack;
-use pumpkin_data::sound::Sound;
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_data::{Block, BlockState, BlockStateId};
 use pumpkin_nbt::compound::NbtCompound;
@@ -579,7 +578,6 @@ impl Mob for BeeEntity {
     }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
-        self.write_ageable_nbt(nbt);
         put_block_pos(nbt, "hive_pos", self.hive_pos.load());
         put_block_pos(nbt, "flower_pos", self.saved_flower_pos.load());
         nbt.put_bool("HasNectar", self.has_nectar());
@@ -599,7 +597,6 @@ impl Mob for BeeEntity {
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
-        self.read_ageable_nbt(nbt);
         self.hive_pos.store(get_block_pos(nbt, "hive_pos"));
         self.saved_flower_pos
             .store(get_block_pos(nbt, "flower_pos"));
@@ -653,6 +650,6 @@ impl Mob for BeeEntity {
     }
 
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
-        self.animal_interact(player, item_stack, Sound::EntityBeePollinate)
+        self.animal_interact(player, item_stack)
     }
 }

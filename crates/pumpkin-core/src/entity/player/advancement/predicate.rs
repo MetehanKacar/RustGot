@@ -421,8 +421,6 @@ impl LocationPredicate {
         {
             return false;
         }
-        // Live chunks do not keep structure starts yet, so "inside this structure" cannot be
-        // answered; failing keeps structure advancements from completing anywhere.
         if self.structure.is_some() {
             return false;
         }
@@ -479,8 +477,10 @@ impl LocationPredicate {
         let structure = loc_map
             .get("structures")
             .or_else(|| loc_map.get("structure"))
-            .and_then(Value::as_str)
-            .map(ToString::to_string);
+            .map(|v| {
+                v.as_str()
+                    .map_or_else(|| v.to_string(), ToString::to_string)
+            });
 
         let player_pred = map.get("player").and_then(|p| p.get("predicate"));
         let stepping_on = player_pred
@@ -2296,6 +2296,30 @@ mod tests {
         assert!(matches_damage_condition(&cond, true, true, None));
         assert!(!matches_damage_condition(&cond, false, true, None));
         assert!(!matches_damage_condition(&cond, true, false, None));
+    }
+
+    #[test]
+    fn location_structure_condition_does_not_match_everywhere() {
+        for structures in [json!("minecraft:fortress"), json!(["minecraft:fortress"])] {
+            let predicate = LocationPredicate::from_value(&json!({
+                "player": {
+                    "type": "minecraft:entity_properties",
+                    "entity": "this",
+                    "predicate": { "minecraft:location": { "structures": structures } }
+                }
+            }));
+            assert!(predicate.structure.is_some());
+            assert!(!predicate.matches(
+                (0.0, 64.0, 0.0),
+                Some("plains"),
+                Some("minecraft:overworld"),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ));
+        }
     }
 
     #[test]
