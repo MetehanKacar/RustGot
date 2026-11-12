@@ -79,7 +79,7 @@ impl HungerManager {
                     || (health > 1.0 && difficulty == Difficulty::Normal);
 
                 if should_starve {
-                    damage_amount = 1.0;
+                    damage_amount = player.world().purpur().hunger.starvation_damage;
                 }
                 self.tick_timer.store(0);
             }

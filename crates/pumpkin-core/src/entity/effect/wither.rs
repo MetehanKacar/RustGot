@@ -19,13 +19,14 @@ impl MobEffect for WitherMobEffect {
     }
 
     fn apply_effect_tick(&self, living: &LivingEntity, _amplifier: u8) {
-        let dyn_self = living
-            .entity
-            .world
-            .load()
-            .get_entity_by_id(living.entity.entity_id);
-        if let Some(dyn_self) = dyn_self {
-            dyn_self.damage(&*dyn_self, 1.0, DamageType::WITHER);
+        let world = living.entity.world.load();
+        if let Some(dyn_self) = world.get_entity_by_id(living.entity.entity_id) {
+            let amount = world
+                .purpur()
+                .gameplay_mechanics
+                .mob_effects
+                .wither_degeneration_amount;
+            dyn_self.damage(&*dyn_self, amount, DamageType::WITHER);
         }
     }
 }

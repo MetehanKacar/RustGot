@@ -2671,7 +2671,13 @@ impl LivingEntity {
             };
 
             let should_drop_loot = perished && dyn_self.should_drop_loot();
-            if should_drop_loot {
+            if should_drop_loot
+                && (damage_type != DamageType::CRAMMING
+                    || !world
+                        .purpur()
+                        .gameplay_mechanics
+                        .disable_drops_on_cramming_death)
+            {
                 self.drop_loot(&*dyn_self, &params);
             }
 

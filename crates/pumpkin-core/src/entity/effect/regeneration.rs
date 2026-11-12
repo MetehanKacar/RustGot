@@ -20,7 +20,15 @@ impl MobEffect for RegenerationMobEffect {
         let current_health = living.health.load();
         let max_health = living.get_max_health();
         if current_health < max_health && current_health > 0.0 {
-            living.heal(1.0);
+            let amount = living
+                .entity
+                .world
+                .load()
+                .purpur()
+                .gameplay_mechanics
+                .mob_effects
+                .health_regen_amount;
+            living.heal(amount);
         }
     }
 }
