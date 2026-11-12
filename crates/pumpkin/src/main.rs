@@ -30,13 +30,14 @@ use pumpkin_core::{
 use pumpkin_core::{PumpkinServer, stop_server};
 
 use pumpkin_config::{LoadConfiguration, PumpkinConfig};
-use rustgot_config::RustGotConfig;
 use pumpkin_core::plugin::loader::PluginLoader;
 use pumpkin_util::text::{
     TextComponent,
     color::{Color, NamedColor},
 };
 use pumpkin_wasm_host::WasmPluginLoader;
+use rustgot_config::RustGotConfig;
+use rustgot_jvm::JavaPluginHost;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
@@ -162,18 +163,6 @@ async fn main() {
     }
     print_support_links_and_warning();
 
-    let java_plugins = rustgot_config::java_plugin_jars(&exec_dir.join("plugins"));
-    if !java_plugins.is_empty() {
-        if rustgot_config.jvm.enabled {
-            warn!(
-                "Found {} Java plugin(s) in plugins/, but the Java plugin bridge is not available yet; they will not be loaded.",
-                java_plugins.len()
-            );
-        } else {
-            info!("Java plugins are disabled in rustgot.yml (jvm.enabled: false)");
-        }
-    }
-
     tokio::spawn(async {
         if let Err(err) = setup_sighandler().await {
             tracing::error!("Unable to setup signal handlers: {err}");
@@ -203,6 +192,17 @@ async fn main() {
         exit(1);
     });
     let plugin_wait_time = pumpkin_server.init_plugins().await;
+
+    // The JVM only starts when there are Java plugins, so servers without them pay nothing.
+    let java_plugins = rustgot_config::java_plugin_jars(&exec_dir.join("plugins"));
+    let java_plugin_host = if java_plugins.is_empty() {
+        None
+    } else if rustgot_config.jvm.enabled {
+        JavaPluginHost::start(&exec_dir, &rustgot_config.jvm, java_plugins).await
+    } else {
+        info!("Java plugins are disabled in rustgot.yml (jvm.enabled: false)");
+        None
+    };
 
     let time_elapsed = time.elapsed().saturating_sub(plugin_wait_time);
 
@@ -252,6 +252,10 @@ async fn main() {
     );
 
     pumpkin_server.start().await;
+
+    if let Some(java_plugin_host) = java_plugin_host {
+        java_plugin_host.shutdown().await;
+    }
 
     info!(
         "{}",

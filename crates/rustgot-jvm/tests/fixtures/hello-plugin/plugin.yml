@@ -1,0 +1,3 @@
+name: HelloRustGot
+version: 1.0.0
+main: rustgot.test.HelloRustGot
