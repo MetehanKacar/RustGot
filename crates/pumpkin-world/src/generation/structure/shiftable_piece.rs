@@ -42,6 +42,12 @@ impl ShiftableStructurePiece {
         }
     }
 
+    /// Vanilla `ScatteredFeaturePiece.heightPosition`.
+    #[must_use]
+    pub const fn height_position(&self) -> i32 {
+        self.h_pos
+    }
+
     pub fn adjust_to_average_height(&mut self, chunk: &ProtoChunk) -> bool {
         let bounding_box = self.piece.bounding_box;
         if self.h_pos >= 0 {

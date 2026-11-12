@@ -118,6 +118,8 @@ pub struct Level {
     pub level_channel: Arc<LevelChannel>,
     pub thread_tracker: Mutex<Vec<thread::JoinHandle<()>>>,
     pub chunk_listener: Arc<ChunkListener>,
+    /// Shapes of structure starts that loaded chunks reference, shared between those chunks.
+    pub(crate) structure_start_shapes: crate::level_structures::StructureStartShapes,
 }
 
 pub struct TickData {
@@ -325,6 +327,7 @@ impl Level {
             level_channel: level_channel.clone(),
             thread_tracker,
             chunk_listener: listener.clone(),
+            structure_start_shapes: crate::level_structures::StructureStartShapes::default(),
         });
 
         GenerationSchedule::create(

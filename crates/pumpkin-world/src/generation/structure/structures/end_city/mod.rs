@@ -15,7 +15,8 @@ use crate::{
         piece::StructurePieceType,
         structures::{
             StructureGenerator, StructureGeneratorContext, StructurePiece, StructurePieceBase,
-            StructurePiecesCollector, StructurePosition,
+            StructurePiecesCollector, StructurePosition, add_template_save_data,
+            rotation_legacy_name,
         },
         template::{BlockStateResolver, PaletteEntry, get_block_entity_id},
     },
@@ -255,6 +256,25 @@ impl EndCityTemplatePiece {
 }
 
 impl StructurePieceBase for EndCityTemplatePiece {
+    fn orientation(&self) -> Option<pumpkin_util::BlockDirection> {
+        // Vanilla `TemplateStructurePiece` always faces north.
+        Some(pumpkin_util::BlockDirection::North)
+    }
+
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        // `EndCityPiece.makeTemplateLocation` adds the `end_city/` folder back.
+        add_template_save_data(
+            tag,
+            self.descriptor.template_name,
+            self.descriptor.template_position,
+        );
+        tag.put_string(
+            "Rot",
+            rotation_legacy_name(self.descriptor.rotation).to_string(),
+        );
+        tag.put_bool("OW", self.descriptor.overwrite);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

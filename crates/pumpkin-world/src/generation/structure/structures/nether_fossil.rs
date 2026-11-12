@@ -1,5 +1,10 @@
 use std::sync::Arc;
 
+use crate::generation::structure::structures::{
+    add_template_save_data, namespaced_template, rotation_legacy_name,
+};
+use pumpkin_nbt::compound::NbtCompound;
+
 use pumpkin_data::{Block, BlockDirection, BlockState, Mirror, Rotation};
 use pumpkin_util::{
     math::{block_box::BlockBox, position::BlockPos, vector3::Vector3},
@@ -250,6 +255,23 @@ impl NetherFossilPiece {
 }
 
 impl StructurePieceBase for NetherFossilPiece {
+    fn orientation(&self) -> Option<pumpkin_util::BlockDirection> {
+        // Vanilla `TemplateStructurePiece` always faces north.
+        Some(pumpkin_util::BlockDirection::North)
+    }
+
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        add_template_save_data(
+            tag,
+            &namespaced_template(&self.template_name),
+            self.template_position,
+        );
+        tag.put_string(
+            "Rot",
+            rotation_legacy_name(self.place_settings.get_rotation()).to_string(),
+        );
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
