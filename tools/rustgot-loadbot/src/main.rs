@@ -10,7 +10,13 @@
 //!
 //! Paper/Purpur need `allow-flight=true` and `online-mode=false` in `server.properties`.
 
-use std::{f64::consts::TAU, net::SocketAddr, process::ExitCode, time::Duration};
+use std::{
+    f64::consts::TAU,
+    net::SocketAddr,
+    process::ExitCode,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use bytes::Bytes;
 use pumpkin_data::packet::CURRENT_MC_VERSION;
@@ -30,8 +36,8 @@ use pumpkin_protocol::{
             handshake::SHandShake,
             login::{SLoginAcknowledged, SLoginStart},
             play::{
-                SChunkBatch, SClientTickEnd, SConfirmTeleport, SKeepAlive, SPlayPong, SPlayerLoaded,
-                SPlayerPosition,
+                SChunkBatch, SClientTickEnd, SConfirmTeleport, SKeepAlive, SPlayPong,
+                SPlayerLoaded, SPlayerPosition,
             },
         },
     },
@@ -52,8 +58,10 @@ use uuid::Uuid;
 
 /// Height bots fly at, above any terrain so movement never collides.
 const FLY_Y: f64 = 200.0;
-/// Blocks per tick (10 blocks/s), below Paper's "moved too quickly" limit.
-const SPEED: f64 = 0.5;
+/// Default blocks per tick (10 blocks/s), below Paper's "moved too quickly" limit.
+const DEFAULT_SPEED: f64 = 0.5;
+/// Chunks all bots received, summed from the server's chunk batch sizes.
+static CHUNKS_RECEIVED: AtomicU64 = AtomicU64::new(0);
 const VIEW_DISTANCE: i8 = 10;
 /// Chunks per tick the bot asks for after each batch, like a fast vanilla client.
 const CHUNKS_PER_TICK: f32 = 25.0;
@@ -77,16 +85,23 @@ async fn main() -> ExitCode {
         args.first().and_then(|a| a.parse::<SocketAddr>().ok()),
         args.get(1).and_then(|a| a.parse::<u32>().ok()),
     ) else {
-        eprintln!("usage: rustgot-loadbot <addr> <bots> [fly-seconds]");
+        eprintln!("usage: rustgot-loadbot <addr> <bots> [fly-seconds] [blocks-per-tick]");
         return ExitCode::FAILURE;
     };
-    let fly_secs = args.get(2).and_then(|a| a.parse::<u64>().ok()).unwrap_or(60);
+    let fly_secs = args
+        .get(2)
+        .and_then(|a| a.parse::<u64>().ok())
+        .unwrap_or(60);
+    let speed = args
+        .get(3)
+        .and_then(|a| a.parse::<f64>().ok())
+        .unwrap_or(DEFAULT_SPEED);
 
     for i in 0..bots {
         let angle = TAU * f64::from(i) / f64::from(bots);
         tokio::spawn(async move {
             let name = format!("bot{i}");
-            if let Err(err) = run_bot(addr, &name, angle, fly_secs).await {
+            if let Err(err) = run_bot(addr, &name, angle, fly_secs, speed).await {
                 eprintln!("{name}: {err}");
             }
         });
@@ -94,11 +109,24 @@ async fn main() -> ExitCode {
         sleep(Duration::from_millis(100)).await;
     }
     eprintln!("spawned {bots} bots");
-    std::future::pending::<()>().await;
-    ExitCode::SUCCESS
+    let mut report = interval(Duration::from_secs(10));
+    report.tick().await;
+    loop {
+        report.tick().await;
+        eprintln!(
+            "chunks received: {}",
+            CHUNKS_RECEIVED.load(Ordering::Relaxed)
+        );
+    }
 }
 
-async fn run_bot(addr: SocketAddr, name: &str, angle: f64, fly_secs: u64) -> Result<(), String> {
+async fn run_bot(
+    addr: SocketAddr,
+    name: &str,
+    angle: f64,
+    fly_secs: u64,
+    speed: f64,
+) -> Result<(), String> {
     let stream = TcpStream::connect(addr)
         .await
         .map_err(|err| format!("connect failed: {err}"))?;
@@ -116,7 +144,7 @@ async fn run_bot(addr: SocketAddr, name: &str, angle: f64, fly_secs: u64) -> Res
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let fly_ticks = fly_secs * 20;
     let mut flown = 0;
-    let (dx, dz) = (angle.cos() * SPEED, angle.sin() * SPEED);
+    let (dx, dz) = (angle.cos() * speed, angle.sin() * speed);
 
     loop {
         tokio::select! {
@@ -134,7 +162,7 @@ async fn run_bot(addr: SocketAddr, name: &str, angle: f64, fly_secs: u64) -> Res
             }
             _ = tick.tick() => {
                 if position.y < FLY_Y {
-                    position.y = (position.y + SPEED).min(FLY_Y);
+                    position.y = (position.y + DEFAULT_SPEED).min(FLY_Y);
                 } else if flown < fly_ticks {
                     position.x += dx;
                     position.z += dz;
@@ -170,6 +198,7 @@ async fn read_loop(mut reader: Decoder, tx: mpsc::UnboundedSender<Reply>) {
                 .and_then(|id| id.try_into().ok())
                 .map(|id| Reply::Pong(i32::from_be_bytes(id)))
         } else if packet.id == batch_end {
+            CHUNKS_RECEIVED.fetch_add(read_var_int(payload), Ordering::Relaxed);
             Some(Reply::ChunkBatch)
         } else if packet.id == teleport {
             CPlayerPosition::read(&mut payload, &CURRENT_MC_VERSION)
@@ -184,6 +213,18 @@ async fn read_loop(mut reader: Decoder, tx: mpsc::UnboundedSender<Reply>) {
             return;
         }
     }
+}
+
+/// A protocol `VarInt` at the start of `bytes`, or 0 if it is malformed.
+fn read_var_int(bytes: &[u8]) -> u64 {
+    let mut value = 0u64;
+    for (i, byte) in bytes.iter().take(5).enumerate() {
+        value |= u64::from(byte & 0x7F) << (7 * i);
+        if byte & 0x80 == 0 {
+            return value;
+        }
+    }
+    0
 }
 
 /// Logs in and finishes configuration; returns the spawn position.
