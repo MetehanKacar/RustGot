@@ -54,7 +54,7 @@ use pumpkin_util::translation::Locale;
 use pumpkin_util::version::JavaMinecraftVersion;
 use pumpkin_world::chunk::ChunkData;
 use tokio::task::JoinHandle;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -663,6 +663,8 @@ pub struct Player {
     pub watched_section: AtomicCell<Cylindrical>,
     /// The last time the player performed an action (for idle timeout).
     pub last_action_time: AtomicCell<Instant>,
+    /// Purpur's AFK state, set past the idle timeout when `kick-if-idle` is off.
+    pub afk: AtomicBool,
     /// The ping in millis.
     pub ping: AtomicU32,
     /// The amount of ticks since the player's last attack.
@@ -1006,6 +1008,7 @@ impl Player {
                 NonZero::new(1).unwrap_or(NonZero::<u8>::MIN),
             )),
             last_action_time: AtomicCell::new(std::time::Instant::now()),
+            afk: AtomicBool::new(false),
             ping: AtomicU32::new(0),
             last_attacked_ticks: AtomicU32::new(0),
             client_loaded: AtomicBool::new(initially_loaded),
@@ -1671,7 +1674,12 @@ impl Player {
         }
 
         if matches!(attack_type, AttackType::Critical) {
-            damage *= 1.5;
+            damage *= self
+                .world()
+                .purpur()
+                .gameplay_mechanics
+                .player
+                .critical_damage_multiplier;
         }
 
         let old_movement = victim_entity.velocity.load();
@@ -3394,7 +3402,19 @@ impl Player {
         let idle_timeout_minutes = server.player_idle_timeout.load(Ordering::Relaxed);
         if idle_timeout_minutes > 0 {
             let idle_duration = now.duration_since(self.last_action_time.load());
-            if idle_duration >= Duration::from_secs(idle_timeout_minutes as u64 * 60) {
+            if idle_duration >= Duration::from_secs(idle_timeout_minutes as u64 * 60)
+                && !self.afk.load(Ordering::Relaxed)
+            {
+                if !self
+                    .world()
+                    .purpur()
+                    .gameplay_mechanics
+                    .player
+                    .idle_timeout_kick_if_idle
+                {
+                    self.set_afk(true);
+                    return;
+                }
                 self.kick(
                     DisconnectReason::KickedForIdle,
                     &TextComponent::translate_cross(
@@ -4959,6 +4979,28 @@ impl Player {
     /// Updates the last action time to now. Call this on player actions like movement, chat, etc.
     pub fn update_last_action_time(&self) {
         self.last_action_time.store(std::time::Instant::now());
+        self.set_afk(false);
+    }
+
+    /// Purpur's `ServerPlayer.setAfk`: broadcasts when the AFK state changes.
+    pub fn set_afk(&self, afk: bool) {
+        if self.afk.swap(afk, Ordering::Relaxed) == afk {
+            return;
+        }
+        let Some(message) = rustgot_purpur::get()
+            .settings
+            .messages
+            .afk_broadcast(afk, &self.gameprofile.name)
+        else {
+            return;
+        };
+        let Some(server) = self.world().server.upgrade() else {
+            return;
+        };
+        info!("{}", message.clone().to_pretty_console());
+        for world in server.worlds.load().iter() {
+            world.broadcast_system_message(&message, false);
+        }
     }
 
     /// Checks whether sending a chat message or command constitutes spam.
