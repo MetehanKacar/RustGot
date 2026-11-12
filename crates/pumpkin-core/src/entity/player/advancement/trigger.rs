@@ -306,6 +306,7 @@ impl Player {
                         None,
                         stepping_block,
                         feet_item.as_deref(),
+                        &|wanted| world.level.has_structure_piece_at(&block_pos, wanted),
                     ),
                     CriterionConditions::Custom { .. } => true,
                     _ => false,

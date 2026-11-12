@@ -1,3 +1,4 @@
+use pumpkin_data::structures::StructureKeys;
 use pumpkin_data::tag::{RegistryKey, get_tag_values};
 use serde_json::Value;
 
@@ -327,6 +328,9 @@ impl InventoryChangedPredicate {
 }
 
 /// Strongly-typed location condition.
+/// Answers whether a piece of a structure the given filter accepts is at the checked position.
+pub type StructurePieceLookup<'a> = &'a dyn Fn(&dyn Fn(StructureKeys) -> bool) -> bool;
+
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct LocationPredicate {
     pub x: Option<FloatBounds>,
@@ -337,7 +341,7 @@ pub struct LocationPredicate {
     pub block: Option<TagOrIdMatcher>,
     pub can_see_sky: Option<bool>,
     pub smokey: Option<bool>,
-    pub structure: Option<String>,
+    pub structures: Option<TagOrIdMatcher>,
     pub stepping_on: Option<TagOrIdMatcher>,
     pub feet_item: Option<TagOrIdMatcher>,
 }
@@ -355,6 +359,7 @@ impl LocationPredicate {
         smokey: Option<bool>,
         stepping_block: Option<&str>,
         feet_item: Option<&str>,
+        has_structure_piece: StructurePieceLookup<'_>,
     ) -> bool {
         if let Some(x) = &self.x
             && !x.matches(pos.0)
@@ -421,7 +426,12 @@ impl LocationPredicate {
         {
             return false;
         }
-        if self.structure.is_some() {
+        // Vanilla `StructureManager.getStructureWithPieceAt(pos, structures).isValid()`.
+        if let Some(structures) = &self.structures
+            && !has_structure_piece(&|structure| {
+                structures.matches(RegistryKey::WorldgenStructure, structure.to_name())
+            })
+        {
             return false;
         }
         true
@@ -474,13 +484,10 @@ impl LocationPredicate {
 
         let can_see_sky = loc_map.get("can_see_sky").and_then(Value::as_bool);
         let smokey = loc_map.get("smokey").and_then(Value::as_bool);
-        let structure = loc_map
+        let structures = loc_map
             .get("structures")
             .or_else(|| loc_map.get("structure"))
-            .map(|v| {
-                v.as_str()
-                    .map_or_else(|| v.to_string(), ToString::to_string)
-            });
+            .and_then(TagOrIdMatcher::from_value);
 
         let player_pred = map.get("player").and_then(|p| p.get("predicate"));
         let stepping_on = player_pred
@@ -506,7 +513,7 @@ impl LocationPredicate {
             block,
             can_see_sky,
             smokey,
-            structure,
+            structures,
             stepping_on,
             feet_item,
         }
@@ -1437,7 +1444,9 @@ impl From<pumpkin_data::advancement_data::AdvancementCondition> for CriterionCon
                 }),
                 can_see_sky: l.can_see_sky,
                 smokey: l.smokey,
-                structure: l.structure.map(ToString::to_string),
+                structures: l.structure.map(|s| TagOrIdMatcher {
+                    patterns: vec![s.to_string()],
+                }),
                 stepping_on: l.stepping_on.map(|b| TagOrIdMatcher {
                     patterns: vec![b.to_string()],
                 }),
@@ -2074,6 +2083,7 @@ pub fn matches_location_condition(
         None,
         step_block,
         feet_item,
+        &|_| false,
     )
 }
 
@@ -2203,9 +2213,9 @@ mod tests {
         assert!(!matches_inventory_condition(&cond, &empty_inv, 0, 36, 0));
     }
 
-    /// Vanilla `nether/find_fortress` must not complete just by standing anywhere.
+    /// Vanilla `nether/find_fortress` completes only on a fortress piece.
     #[test]
-    fn structure_location_does_not_match_outside_a_structure() {
+    fn structure_location_needs_a_piece_of_the_structure() {
         let pred = LocationPredicate::from_value(&json!({
             "player": {
                 "type": "minecraft:entity_properties",
@@ -2213,16 +2223,22 @@ mod tests {
                 "predicate": {"minecraft:location": {"structures": "minecraft:fortress"}}
             }
         }));
-        assert!(!pred.matches(
-            (0.0, 64.0, 0.0),
-            Some("minecraft:plains"),
-            Some("minecraft:overworld"),
-            Some("grass_block"),
-            None,
-            None,
-            Some("grass_block"),
-            None,
-        ));
+        let at = |pieces: &[StructureKeys]| {
+            pred.matches(
+                (0.0, 64.0, 0.0),
+                Some("minecraft:nether_wastes"),
+                Some("minecraft:the_nether"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                &|wanted| pieces.iter().any(|&piece| wanted(piece)),
+            )
+        };
+        assert!(at(&[StructureKeys::Fortress]));
+        assert!(!at(&[StructureKeys::BastionRemnant]));
+        assert!(!at(&[]));
     }
 
     #[test]
@@ -2296,30 +2312,6 @@ mod tests {
         assert!(matches_damage_condition(&cond, true, true, None));
         assert!(!matches_damage_condition(&cond, false, true, None));
         assert!(!matches_damage_condition(&cond, true, false, None));
-    }
-
-    #[test]
-    fn location_structure_condition_does_not_match_everywhere() {
-        for structures in [json!("minecraft:fortress"), json!(["minecraft:fortress"])] {
-            let predicate = LocationPredicate::from_value(&json!({
-                "player": {
-                    "type": "minecraft:entity_properties",
-                    "entity": "this",
-                    "predicate": { "minecraft:location": { "structures": structures } }
-                }
-            }));
-            assert!(predicate.structure.is_some());
-            assert!(!predicate.matches(
-                (0.0, 64.0, 0.0),
-                Some("plains"),
-                Some("minecraft:overworld"),
-                None,
-                None,
-                None,
-                None,
-                None,
-            ));
-        }
     }
 
     #[test]
@@ -2413,7 +2405,8 @@ mod tests {
                     None,
                     None,
                     Some("powder_snow"),
-                    Some("leather_boots")
+                    Some("leather_boots"),
+                    &|_| false,
                 ));
                 assert!(!pred.matches(
                     (0.0, 64.0, 0.0),
@@ -2423,7 +2416,8 @@ mod tests {
                     None,
                     None,
                     Some("stone"),
-                    Some("leather_boots")
+                    Some("leather_boots"),
+                    &|_| false,
                 ));
                 assert!(!pred.matches(
                     (0.0, 64.0, 0.0),
@@ -2433,7 +2427,8 @@ mod tests {
                     None,
                     None,
                     Some("powder_snow"),
-                    Some("diamond_boots")
+                    Some("diamond_boots"),
+                    &|_| false,
                 ));
             }
             _ => panic!("Expected Location variant"),
