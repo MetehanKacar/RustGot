@@ -31,8 +31,7 @@ const HEADER_SIZE: usize = SECTOR_SIZE * 2; // Location table + timestamp table
 /// Compression type for MCA format
 const COMPRESSION_ZLIB: u8 = 2;
 
-// Data version for 1.21
-const DATA_VERSION: i32 = 3955;
+const DATA_VERSION: i32 = crate::world_info::MAXIMUM_SUPPORTED_WORLD_DATA_VERSION;
 
 /// A single Point of Interest entry (serializable)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,9 +215,10 @@ impl PoiRegion {
             let mut rec_list = Vec::new();
             for rec in &sec_data.records {
                 let mut rec_comp = pumpkin_nbt::compound::NbtCompound::new();
-                rec_comp.put_int("x", rec.x);
-                rec_comp.put_int("y", rec.y);
-                rec_comp.put_int("z", rec.z);
+                rec_comp.put(
+                    "pos",
+                    pumpkin_nbt::tag::NbtTag::IntArray(vec![rec.x, rec.y, rec.z]),
+                );
                 rec_comp.put_string("type", rec.poi_type.clone());
                 rec_comp.put_int("free_tickets", rec.free_tickets);
                 rec_list.push(pumpkin_nbt::tag::NbtTag::Compound(rec_comp));
@@ -259,10 +259,21 @@ impl PoiRegion {
                     {
                         for rec_t in rec_list {
                             if let pumpkin_nbt::tag::NbtTag::Compound(rc) = rec_t {
+                                // Vanilla stores `pos` as an int array; older RustGot saves used
+                                // separate x/y/z ints.
+                                let (x, y, z) = match rc.get_int_array("pos") {
+                                    Some(&[x, y, z]) => (x, y, z),
+                                    _ => {
+                                        match (rc.get_int("x"), rc.get_int("y"), rc.get_int("z")) {
+                                            (Some(x), Some(y), Some(z)) => (x, y, z),
+                                            _ => continue,
+                                        }
+                                    }
+                                };
                                 records.push(PoiEntry {
-                                    x: rc.get_int("x").unwrap_or(0),
-                                    y: rc.get_int("y").unwrap_or(0),
-                                    z: rc.get_int("z").unwrap_or(0),
+                                    x,
+                                    y,
+                                    z,
                                     poi_type: rc
                                         .get_string("type")
                                         .unwrap_or(POI_TYPE_NETHER_PORTAL)
@@ -1058,6 +1069,79 @@ mod tests {
                 .find_closest_matching(BlockPos(Vector3::new(1000, 64, 100)), 16, |_| true)
                 .is_none()
         );
+    }
+
+    fn raw_record_nbt(chunk_data: &PoiChunkData) -> pumpkin_nbt::compound::NbtCompound {
+        let compressed = PoiRegion::compress_chunk_data(chunk_data).unwrap();
+        let mut uncompressed = Vec::new();
+        ZlibDecoder::new(compressed.as_slice())
+            .read_to_end(&mut uncompressed)
+            .unwrap();
+        let mut cursor = Cursor::new(uncompressed);
+        let mut reader = pumpkin_nbt::deserializer::NbtReadHelperJava::new(
+            pumpkin_nbt::deserializer::NbtStreamReader(&mut cursor),
+        );
+        let nbt = pumpkin_nbt::Nbt::read(&mut reader).unwrap();
+        let section = nbt
+            .get_compound("Sections")
+            .unwrap()
+            .get_compound("4")
+            .unwrap();
+        let Some(pumpkin_nbt::tag::NbtTag::List(records)) = section.get("Records") else {
+            panic!("missing Records");
+        };
+        let pumpkin_nbt::tag::NbtTag::Compound(record) = &records[0] else {
+            panic!("record is not a compound");
+        };
+        record.clone()
+    }
+
+    #[test]
+    fn poi_record_uses_vanilla_pos_codec() {
+        let mut sections = FxHashMap::default();
+        sections.insert(
+            "4".to_string(),
+            PoiSectionData {
+                valid: 1,
+                records: vec![PoiEntry {
+                    x: -5,
+                    y: 70,
+                    z: 33,
+                    poi_type: "minecraft:home".to_string(),
+                    free_tickets: 1,
+                }],
+            },
+        );
+        let chunk_data = PoiChunkData {
+            data_version: DATA_VERSION,
+            sections,
+        };
+        let record = raw_record_nbt(&chunk_data);
+        assert_eq!(record.get_int_array("pos"), Some(&[-5, 70, 33][..]));
+        assert_eq!(record.get_string("type"), Some("minecraft:home"));
+    }
+
+    #[test]
+    fn poi_reads_legacy_xyz_records() {
+        let mut record = pumpkin_nbt::compound::NbtCompound::new();
+        record.put_int("x", 7);
+        record.put_int("y", 64);
+        record.put_int("z", -9);
+        record.put_string("type", "minecraft:bee_nest".to_string());
+        let mut section = pumpkin_nbt::compound::NbtCompound::new();
+        section.put_bool("Valid", true);
+        section.put_list("Records", vec![pumpkin_nbt::tag::NbtTag::Compound(record)]);
+        let mut sections = pumpkin_nbt::compound::NbtCompound::new();
+        sections.put_compound("4", section);
+        let mut root = pumpkin_nbt::compound::NbtCompound::new();
+        root.put_compound("Sections", sections);
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(&pumpkin_nbt::Nbt::from(root).write())
+            .unwrap();
+        let data = PoiRegion::decompress_chunk_data(&encoder.finish().unwrap()).unwrap();
+        let entry = &data.sections["4"].records[0];
+        assert_eq!((entry.x, entry.y, entry.z), (7, 64, -9));
     }
 
     #[test]

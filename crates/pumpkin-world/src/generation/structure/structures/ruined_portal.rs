@@ -291,11 +291,14 @@ pub struct RuinedPortalProperties {
     pub replace_with_blackstone: bool,
 }
 
-pub struct RuinedPortalGenerator {
+pub struct RuinedPortalGenerator<'a> {
     pub variant: StructureKeys,
+    /// Vanilla `RuinedPortalStructure.isCold`; `None` keeps `can_be_cold` when no biome source is
+    /// available.
+    pub is_cold: Option<&'a dyn Fn(Vector3<i32>) -> bool>,
 }
 
-impl StructureGenerator for RuinedPortalGenerator {
+impl StructureGenerator for RuinedPortalGenerator<'_> {
     fn get_structure_position(
         &self,
         mut context: StructureGeneratorContext<'_>,
@@ -376,7 +379,7 @@ impl StructureGenerator for RuinedPortalGenerator {
 
         let origin = Vector3::new(base_position.x, projected_y, base_position.z);
         let properties = RuinedPortalProperties {
-            cold: chosen_setup.can_be_cold,
+            cold: chosen_setup.can_be_cold && self.is_cold.is_none_or(|is_cold| is_cold(origin)),
             mossiness: chosen_setup.mossiness,
             air_pocket,
             overgrown: chosen_setup.overgrown,

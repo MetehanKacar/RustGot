@@ -167,7 +167,11 @@ use pumpkin_world::{
     CURRENT_BEDROCK_MC_VERSION, biome,
     chunk::{io::Dirtiable, palette::bedrock_water_state},
 };
-use pumpkin_world::{chunk::ChunkData, chunk_system::ChunkPos, world::BlockAccessor};
+use pumpkin_world::{
+    chunk::ChunkData,
+    chunk_system::{ChunkPos, chunk_loading::ChunkLoading},
+    world::BlockAccessor,
+};
 use pumpkin_world::{
     level::Level,
     tick::{TickPriority, order},
@@ -288,6 +292,7 @@ pub struct World {
     tick_spawns: std::sync::Mutex<Vec<(u64, i32)>>,
     active_chunk_tracker: std::sync::Mutex<ActiveChunkTracker>,
     pub forced_chunks: std::sync::Mutex<FxHashSet<Vector2<i32>>>,
+    forced_chunks_dirty: std::sync::atomic::AtomicBool,
     /// Block entities indexed by chunk, so ticking only visits the currently
     /// active chunks instead of scanning every loaded block entity each tick.
     pub block_entities: DashMap<Vector2<i32>, FxHashMap<BlockPos, Arc<dyn BlockEntity>>>,
@@ -410,6 +415,24 @@ impl World {
             let _ = level.rt_handle.set(server_arc.runtime.clone());
         }
 
+        let forced_chunks: FxHashSet<Vector2<i32>> =
+            pumpkin_world::world_info::data_files::read_forced_chunks(
+                &level.level_folder.dim_folder,
+            )
+            .into_iter()
+            .map(|(x, z)| Vector2::new(x, z))
+            .collect();
+        if !forced_chunks.is_empty() {
+            let mut chunk_loading = level
+                .chunk_loading
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for &pos in &forced_chunks {
+                chunk_loading.add_ticket(pos, ChunkLoading::FORCED_TICKET_LEVEL);
+            }
+            chunk_loading.send_change();
+        }
+
         Self {
             uuid: Uuid::new_v4(),
             level,
@@ -449,13 +472,73 @@ impl World {
             navigation_change_sequence: std::sync::atomic::AtomicU64::new(0),
             tick_spawns: std::sync::Mutex::new(Vec::new()),
             active_chunk_tracker: std::sync::Mutex::new(ActiveChunkTracker::default()),
-            forced_chunks: std::sync::Mutex::new(FxHashSet::default()),
+            forced_chunks: std::sync::Mutex::new(forced_chunks),
+            forced_chunks_dirty: std::sync::atomic::AtomicBool::new(false),
             server,
             block_entities: DashMap::new(),
             pending_block_entity_migrations: crossbeam::queue::SegQueue::new(),
             custom_data: std::sync::Mutex::new(custom_data),
             custom_block_entity_data: DashMap::new(),
             entity_tracker: entity_tracker::EntityTracker::new(),
+        }
+    }
+
+    /// Adds or removes the `minecraft:forced` ticket of a chunk, like vanilla
+    /// `ServerLevel.setChunkForced`. Returns whether anything changed.
+    pub fn set_chunk_forced(&self, pos: Vector2<i32>, forced: bool) -> bool {
+        let changed = {
+            let mut forced_chunks = self
+                .forced_chunks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if forced {
+                forced_chunks.insert(pos)
+            } else {
+                forced_chunks.remove(&pos)
+            }
+        };
+        if changed {
+            let mut chunk_loading = self
+                .level
+                .chunk_loading
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if forced {
+                chunk_loading.add_ticket(pos, ChunkLoading::FORCED_TICKET_LEVEL);
+            } else {
+                chunk_loading.remove_ticket(pos, ChunkLoading::FORCED_TICKET_LEVEL);
+            }
+            chunk_loading.send_change();
+            self.forced_chunks_dirty
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        changed
+    }
+
+    fn save_forced_chunks(&self) {
+        if !self
+            .forced_chunks_dirty
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            return;
+        }
+        let mut chunks: Vec<(i32, i32)> = self
+            .forced_chunks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|pos| (pos.x, pos.y))
+            .collect();
+        chunks.sort_unstable();
+        if let Err(e) = pumpkin_world::world_info::data_files::write_forced_chunks(
+            &self.level.level_folder.dim_folder,
+            &chunks,
+            ChunkLoading::VANILLA_FORCED_TICKET_LEVEL,
+            pumpkin_world::world_info::MAXIMUM_SUPPORTED_WORLD_DATA_VERSION,
+        ) {
+            self.forced_chunks_dirty
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            error!("Failed to save forced chunks: {e}");
         }
     }
 
@@ -523,6 +606,7 @@ impl World {
         for change in self.level.loaded_chunk_changes() {
             match change {
                 pumpkin_world::level::LoadedChunkChange::Loaded(pos) => {
+                    self.level.register_chunk_ticks(&pos);
                     if active_chunks.contains(&pos)
                         && self.level.is_chunk_loaded(&pos)
                         && tracker.loaded_active_chunks.insert(pos)
@@ -661,6 +745,8 @@ impl World {
         for chunk_pos in chunks {
             self.save_block_entities(chunk_pos);
         }
+
+        self.save_forced_chunks();
 
         // Save portal POI to disk
         let save_result = self
@@ -7721,6 +7807,8 @@ impl World {
         if let Ok(mut portal_poi) = self.portal_poi.try_lock() {
             let _ = portal_poi.save_all();
         }
+
+        self.save_forced_chunks();
 
         {
             let custom_data = self

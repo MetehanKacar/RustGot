@@ -723,6 +723,84 @@ pub fn write_stopwatches_stub(
         .map_err(|e| WorldInfoError::SerializationError(e.to_string()))
 }
 
+const CHUNK_TICKETS_FILE: &str = "chunk_tickets.dat";
+const FORCED_TICKET_TYPE: &str = "minecraft:forced";
+
+/// Reads the chunks with a persisted `minecraft:forced` ticket from a dimension's
+/// `data/minecraft/chunk_tickets.dat` (vanilla `TicketStorage`).
+#[must_use]
+pub fn read_forced_chunks(dimension_folder: &Path) -> Vec<(i32, i32)> {
+    let path = minecraft_data_dir(dimension_folder).join(CHUNK_TICKETS_FILE);
+    let file = match File::open(&path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => {
+            warn!("Failed to open {}: {e}", path.display());
+            return Vec::new();
+        }
+    };
+    let root = match read_gzip_compound_tag(file) {
+        Ok(root) => root,
+        Err(e) => {
+            warn!("Failed to read {}: {e}", path.display());
+            return Vec::new();
+        }
+    };
+    let Some(NbtTag::List(tickets)) = root.get_compound("data").and_then(|d| d.get("tickets"))
+    else {
+        return Vec::new();
+    };
+    tickets
+        .iter()
+        .filter_map(|ticket| {
+            let NbtTag::Compound(ticket) = ticket else {
+                return None;
+            };
+            if ticket.get_string("type") != Some(FORCED_TICKET_TYPE) {
+                return None;
+            }
+            match ticket.get_int_array("chunk_pos") {
+                Some(&[x, z]) => Some((x, z)),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// Writes `forced_chunks` as `minecraft:forced` tickets at vanilla's `FORCED_TICKET_LEVEL`.
+pub fn write_forced_chunks(
+    dimension_folder: &Path,
+    forced_chunks: &[(i32, i32)],
+    ticket_level: i32,
+    data_version: i32,
+) -> Result<(), WorldInfoError> {
+    let path = minecraft_data_dir(dimension_folder).join(CHUNK_TICKETS_FILE);
+    if forced_chunks.is_empty() && !path.exists() {
+        return Ok(());
+    }
+    let dir = ensure_minecraft_data_dir(dimension_folder)?;
+    let mut data = NbtCompound::new();
+    if !forced_chunks.is_empty() {
+        let tickets = forced_chunks
+            .iter()
+            .map(|&(x, z)| {
+                let mut ticket = NbtCompound::new();
+                ticket.put("chunk_pos", NbtTag::IntArray(vec![x, z]));
+                ticket.put_string("type", FORCED_TICKET_TYPE.to_string());
+                ticket.put_int("level", ticket_level);
+                NbtTag::Compound(ticket)
+            })
+            .collect();
+        data.put_list("tickets", tickets);
+    }
+    let mut root = NbtCompound::new();
+    root.put_compound("data", data);
+    root.put_int("DataVersion", data_version);
+    let file = File::create(dir.join(CHUNK_TICKETS_FILE))?;
+    pumpkin_nbt::nbt_compress::write_gzip_compound_tag(root, BufWriter::new(file))
+        .map_err(|e| WorldInfoError::SerializationError(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

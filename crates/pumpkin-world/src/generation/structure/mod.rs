@@ -3,9 +3,11 @@ use pumpkin_data::{
     tag::{RegistryKey, get_tag_ids},
 };
 
+use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 
-use pumpkin_util::math::vector2::Vector2;
+use pumpkin_data::chunk::Biome;
+use pumpkin_util::math::{vector2::Vector2, vector3::Vector3};
 
 use crate::chunk::structures::{
     ChunkStructures, ReferencedStart, StructureReferences, StructureStart,
@@ -59,7 +61,7 @@ pub fn generate_structure_position(
     structure: &Structure,
     context: StructureGeneratorContext<'_>,
 ) -> Option<StructurePosition> {
-    generate_structure_position_checked(*key, structure, context, |_| true)
+    generate_structure_position_checked(*key, structure, context, None, |_| true)
 }
 
 #[must_use]
@@ -68,6 +70,7 @@ fn generate_structure_position_checked(
     key: StructureKeys,
     structure: &Structure,
     context: StructureGeneratorContext<'_>,
+    is_cold: Option<&dyn Fn(Vector3<i32>) -> bool>,
     is_valid_biome: impl FnOnce(pumpkin_util::math::position::BlockPos) -> bool,
 ) -> Option<StructurePosition> {
     match key {
@@ -157,7 +160,10 @@ fn generate_structure_position_checked(
         | StructureKeys::RuinedPortalMountain
         | StructureKeys::RuinedPortalOcean
         | StructureKeys::RuinedPortalNether => {
-            let generator = RuinedPortalGenerator { variant: key };
+            let generator = RuinedPortalGenerator {
+                variant: key,
+                is_cold,
+            };
             generator
                 .get_structure_position(context)
                 .filter(|pos| is_valid_biome(pos.start_pos))
@@ -222,19 +228,27 @@ pub fn try_generate_structure(
         height_sampler,
         structure_key: Some(*key),
     };
-    generate_structure_position_checked(*key, structure, context, |start_pos| {
-        let biome_y = biome_coords::from_block(start_pos.0.y);
+    let biome_id_at = |pos: Vector3<i32>| {
+        let biome_y = biome_coords::from_block(pos.y);
         let biome_height = (chunk.height() >> 2) as i32;
         let biome_bottom = biome_coords::from_block(chunk.bottom_y() as i32);
         let clamped_biome_y = biome_y.clamp(biome_bottom, biome_bottom + biome_height - 1);
 
-        let current_biome = chunk.get_biome_id(
-            biome_coords::from_block(start_pos.0.x),
+        chunk.get_biome_id(
+            biome_coords::from_block(pos.x),
             clamped_biome_y,
-            biome_coords::from_block(start_pos.0.z),
-        ) as u16;
-
-        biomes.contains(&current_biome)
+            biome_coords::from_block(pos.z),
+        )
+    };
+    let is_cold = |pos: Vector3<i32>| {
+        Biome::from_id(biome_id_at(pos)).is_some_and(|biome| {
+            !biome
+                .weather
+                .warm_enough_to_rain(pos.x, pos.y, pos.z, sea_level)
+        })
+    };
+    generate_structure_position_checked(*key, structure, context, Some(&is_cold), |start_pos| {
+        biomes.contains(&u16::from(biome_id_at(start_pos.0)))
     })
 }
 
@@ -274,13 +288,24 @@ pub fn lazily_generate_structure(
         }
     }
 
-    generate_structure_position_checked(*key, structure, context, |start_pos| {
-        let biome_x = biome_coords::from_block(start_pos.0.x);
-        let biome_y = biome_coords::from_block(start_pos.0.y);
-        let biome_z = biome_coords::from_block(start_pos.0.z);
-
-        let biome = biome_supplier.biome(biome_x, biome_y, biome_z, multi_noise_sampler);
-        biomes.contains(&(biome.id as u16))
+    let sea_level = context.sea_level;
+    let multi_noise_sampler = RefCell::new(multi_noise_sampler);
+    let biome_at = |pos: Vector3<i32>| {
+        biome_supplier.biome(
+            biome_coords::from_block(pos.x),
+            biome_coords::from_block(pos.y),
+            biome_coords::from_block(pos.z),
+            &mut multi_noise_sampler.borrow_mut(),
+        )
+    };
+    // Vanilla `RuinedPortalStructure.isCold`.
+    let is_cold = |pos: Vector3<i32>| {
+        !biome_at(pos)
+            .weather
+            .warm_enough_to_rain(pos.x, pos.y, pos.z, sea_level)
+    };
+    generate_structure_position_checked(*key, structure, context, Some(&is_cold), |start_pos| {
+        biomes.contains(&(biome_at(start_pos.0).id as u16))
     })
 }
 

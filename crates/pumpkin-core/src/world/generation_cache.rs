@@ -17,6 +17,7 @@ use pumpkin_world::{
         blender::blending_data::BlendingData, height_limit::HeightLimitView,
         proto_chunk::GenerationCache,
     },
+    tick::TickPriority,
     world::{BlockAccessor, BlockFlags},
 };
 use rustc_hash::FxHashMap;
@@ -30,6 +31,7 @@ pub struct WorldGenerationCache {
     pending: Vec<(BlockPos, BlockStateId)>,
     overlay: FxHashMap<BlockPos, BlockStateId>,
     block_entities: Vec<NbtCompound>,
+    fluid_ticks: Vec<(BlockPos, &'static Fluid)>,
 }
 
 impl WorldGenerationCache {
@@ -43,6 +45,7 @@ impl WorldGenerationCache {
             pending: Vec::new(),
             overlay: FxHashMap::default(),
             block_entities: Vec::new(),
+            fluid_ticks: Vec::new(),
         }
     }
 
@@ -78,6 +81,10 @@ impl WorldGenerationCache {
             if let Some(block_entity) = block_entity_from_nbt(&nbt) {
                 self.world.add_block_entity(block_entity);
             }
+        }
+        for (pos, fluid) in self.fluid_ticks {
+            self.world
+                .schedule_fluid_tick(fluid, pos, 0, TickPriority::Normal);
         }
     }
 }
@@ -144,6 +151,10 @@ impl GenerationCache for WorldGenerationCache {
         let position = BlockPos(*pos);
         self.overlay.insert(position, block_state.id);
         self.pending.push((position, block_state.id));
+    }
+
+    fn schedule_fluid_tick(&mut self, pos: &Vector3<i32>, fluid: &'static Fluid) {
+        self.fluid_ticks.push((BlockPos(*pos), fluid));
     }
 
     fn add_block_entity(&mut self, pos: &Vector3<i32>, mut nbt: NbtCompound) {

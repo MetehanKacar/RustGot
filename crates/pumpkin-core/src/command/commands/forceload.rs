@@ -5,6 +5,7 @@ use crate::command::context::command_context::CommandContext;
 use crate::command::errors::error_types::CommandErrorType;
 use crate::command::node::dispatcher::CommandDispatcher;
 use crate::command::node::{CommandExecutor, CommandExecutorResult};
+use crate::world::World;
 use pumpkin_data::translation;
 use pumpkin_util::PermissionLvl;
 use pumpkin_util::math::vector2::Vector2;
@@ -22,14 +23,52 @@ static ERROR_FAILED_REMOVE: CommandErrorType<0> = CommandErrorType::new(
     translation::java::COMMANDS_FORCELOAD_REMOVED_FAILURE,
     "No world in source",
 );
+static ERROR_ALL_ADDED: CommandErrorType<0> = CommandErrorType::new(
+    translation::java::COMMANDS_FORCELOAD_ADDED_FAILURE,
+    "No chunks were marked for force loading",
+);
+static ERROR_NONE_REMOVED: CommandErrorType<0> = CommandErrorType::new(
+    translation::java::COMMANDS_FORCELOAD_REMOVED_FAILURE,
+    "No chunks were removed from force loading",
+);
 static ERROR_FAILED_QUERY: CommandErrorType<0> = CommandErrorType::new(
     translation::java::COMMANDS_FORCELOAD_QUERY_FAILURE,
     "No world in source",
+);
+static ERROR_NOT_TICKING: CommandErrorType<2> = CommandErrorType::new(
+    translation::java::COMMANDS_FORCELOAD_QUERY_FAILURE,
+    "Chunk is not marked for force loading",
 );
 static ERROR_TOO_MANY: CommandErrorType<2> = CommandErrorType::new(
     translation::java::COMMANDS_FORCELOAD_TOOBIG,
     "Too many chunks",
 );
+
+/// Returns how many chunks changed and the first changed chunk.
+fn change_force_load(
+    world: &World,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    forced: bool,
+) -> (i32, Vector2<i32>) {
+    let mut changed = 0;
+    let mut first_changed = Vector2::new(min_x, min_z);
+    for x in min_x..=max_x {
+        for z in min_z..=max_z {
+            let pos = Vector2::new(x, z);
+            if world.set_chunk_forced(pos, forced) {
+                if changed == 0 {
+                    first_changed = pos;
+                }
+                changed += 1;
+            }
+        }
+    }
+    world.update_active_chunks();
+    (changed, first_changed)
+}
 
 struct ForceloadAddExecutor;
 
@@ -71,28 +110,19 @@ impl CommandExecutor for ForceloadAddExecutor {
             ));
         }
 
-        {
-            let mut forced = world
-                .forced_chunks
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            for x in min_x..=max_x {
-                for z in min_z..=max_z {
-                    forced.insert(Vector2::new(x, z));
-                }
-            }
+        let (changed, first_changed) = change_force_load(world, min_x, max_x, min_z, max_z, true);
+        if changed == 0 {
+            return Err(ERROR_ALL_ADDED.create_without_context());
         }
-
-        world.update_active_chunks();
 
         let dimension_name = world.dimension.minecraft_name.to_string();
 
-        let text = if total_chunks == 1 {
+        let text = if changed == 1 {
             TextComponent::translate_cross(
                 translation::java::COMMANDS_FORCELOAD_ADDED_SINGLE,
                 translation::java::COMMANDS_FORCELOAD_ADDED_SINGLE,
                 [
-                    TextComponent::text(format!("[{min_x}, {min_z}]")),
+                    TextComponent::text(format!("[{}, {}]", first_changed.x, first_changed.y)),
                     TextComponent::text(dimension_name),
                 ],
             )
@@ -101,7 +131,7 @@ impl CommandExecutor for ForceloadAddExecutor {
                 translation::java::COMMANDS_FORCELOAD_ADDED_MULTIPLE,
                 translation::java::COMMANDS_FORCELOAD_ADDED_MULTIPLE,
                 [
-                    TextComponent::text(total_chunks.to_string()),
+                    TextComponent::text(changed.to_string()),
                     TextComponent::text(dimension_name),
                     TextComponent::text(format!("[{min_x}, {min_z}]")),
                     TextComponent::text(format!("[{max_x}, {max_z}]")),
@@ -110,7 +140,7 @@ impl CommandExecutor for ForceloadAddExecutor {
         };
         context.source.send_feedback(text, true);
 
-        Ok(total_chunks)
+        Ok(changed)
     }
 }
 
@@ -154,28 +184,19 @@ impl CommandExecutor for ForceloadRemoveExecutor {
             ));
         }
 
-        {
-            let mut forced = world
-                .forced_chunks
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            for x in min_x..=max_x {
-                for z in min_z..=max_z {
-                    forced.remove(&Vector2::new(x, z));
-                }
-            }
+        let (changed, first_changed) = change_force_load(world, min_x, max_x, min_z, max_z, false);
+        if changed == 0 {
+            return Err(ERROR_NONE_REMOVED.create_without_context());
         }
-
-        world.update_active_chunks();
 
         let dimension_name = world.dimension.minecraft_name.to_string();
 
-        let text = if total_chunks == 1 {
+        let text = if changed == 1 {
             TextComponent::translate_cross(
                 translation::java::COMMANDS_FORCELOAD_REMOVED_SINGLE,
                 translation::java::COMMANDS_FORCELOAD_REMOVED_SINGLE,
                 [
-                    TextComponent::text(format!("[{min_x}, {min_z}]")),
+                    TextComponent::text(format!("[{}, {}]", first_changed.x, first_changed.y)),
                     TextComponent::text(dimension_name),
                 ],
             )
@@ -184,7 +205,7 @@ impl CommandExecutor for ForceloadRemoveExecutor {
                 translation::java::COMMANDS_FORCELOAD_REMOVED_MULTIPLE,
                 translation::java::COMMANDS_FORCELOAD_REMOVED_MULTIPLE,
                 [
-                    TextComponent::text(total_chunks.to_string()),
+                    TextComponent::text(changed.to_string()),
                     TextComponent::text(dimension_name),
                     TextComponent::text(format!("[{min_x}, {min_z}]")),
                     TextComponent::text(format!("[{max_x}, {max_z}]")),
@@ -193,7 +214,7 @@ impl CommandExecutor for ForceloadRemoveExecutor {
         };
         context.source.send_feedback(text, true);
 
-        Ok(total_chunks)
+        Ok(changed)
     }
 }
 
@@ -207,16 +228,16 @@ impl CommandExecutor for ForceloadRemoveAllExecutor {
             .as_ref()
             .ok_or_else(|| ERROR_FAILED_REMOVE.create_without_context())?;
 
-        let removed_count = {
-            let mut forced = world
-                .forced_chunks
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let count = forced.len();
-            forced.clear();
-            count
-        };
-
+        let forced: Vec<_> = world
+            .forced_chunks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .copied()
+            .collect();
+        for pos in forced {
+            world.set_chunk_forced(pos, false);
+        }
         world.update_active_chunks();
 
         let dimension_name = world.dimension.minecraft_name.to_string();
@@ -228,7 +249,7 @@ impl CommandExecutor for ForceloadRemoveAllExecutor {
         );
         context.source.send_feedback(text, true);
 
-        Ok(removed_count as i32)
+        Ok(0)
     }
 }
 
@@ -242,26 +263,22 @@ impl CommandExecutor for ForceloadQueryExecutor {
             .as_ref()
             .ok_or_else(|| ERROR_FAILED_QUERY.create_without_context())?;
 
-        let chunk_pos = if context.get_argument::<Coordinates>("pos").is_ok() {
-            let pos = ColumnPosArgumentType::get_column_pos(context, "pos")?;
-            Vector2::new(pos.0.x >> 4, pos.0.y >> 4)
-        } else {
-            let block_x = context.source.position.x.floor() as i32;
-            let block_z = context.source.position.z.floor() as i32;
-            Vector2::new(block_x >> 4, block_z >> 4)
-        };
-
-        let is_forced = {
-            let forced = world
-                .forced_chunks
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            forced.contains(&chunk_pos)
-        };
-
         let dimension_name = world.dimension.minecraft_name.to_string();
 
-        if is_forced {
+        if context.get_argument::<Coordinates>("pos").is_ok() {
+            let pos = ColumnPosArgumentType::get_column_pos(context, "pos")?;
+            let chunk_pos = Vector2::new(pos.0.x >> 4, pos.0.y >> 4);
+            let is_forced = world
+                .forced_chunks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&chunk_pos);
+            if !is_forced {
+                return Err(ERROR_NOT_TICKING.create_without_context(
+                    TextComponent::text(format!("[{}, {}]", chunk_pos.x, chunk_pos.y)),
+                    TextComponent::text(dimension_name),
+                ));
+            }
             let text = TextComponent::translate_cross(
                 translation::java::COMMANDS_FORCELOAD_QUERY_SUCCESS,
                 translation::java::COMMANDS_FORCELOAD_QUERY_SUCCESS,
@@ -271,64 +288,59 @@ impl CommandExecutor for ForceloadQueryExecutor {
                 ],
             );
             context.source.send_feedback(text, false);
-        } else {
-            let text = TextComponent::translate_cross(
-                translation::java::COMMANDS_FORCELOAD_QUERY_FAILURE,
-                translation::java::COMMANDS_FORCELOAD_QUERY_FAILURE,
-                [
-                    TextComponent::text(format!("[{}, {}]", chunk_pos.x, chunk_pos.y)),
-                    TextComponent::text(dimension_name),
-                ],
-            );
-            context.source.send_error(text);
+            return Ok(1);
         }
 
-        let all_forced = {
-            let forced = world
-                .forced_chunks
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            forced
-                .iter()
-                .map(|pos| format!("[{}, {}]", pos.x, pos.y))
-                .collect::<Vec<_>>()
-        };
+        let mut all_forced: Vec<Vector2<i32>> = world
+            .forced_chunks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .copied()
+            .collect();
+        // Vanilla sorts by the packed `ChunkPos` long.
+        all_forced.sort_unstable_by_key(|pos| {
+            (i64::from(pos.x) & 0xFFFF_FFFF) | ((i64::from(pos.y) & 0xFFFF_FFFF) << 32)
+        });
 
         if all_forced.is_empty() {
             let text = TextComponent::translate_cross(
                 translation::java::COMMANDS_FORCELOAD_ADDED_NONE,
                 translation::java::COMMANDS_FORCELOAD_ADDED_NONE,
-                [TextComponent::text(
-                    world.dimension.minecraft_name.to_string(),
-                )],
+                [TextComponent::text(dimension_name)],
             );
             context.source.send_error(text);
-        } else {
-            let list_str = all_forced.join(", ");
-            let text = if all_forced.len() == 1 {
-                TextComponent::translate_cross(
-                    translation::java::COMMANDS_FORCELOAD_LIST_SINGLE,
-                    translation::java::COMMANDS_FORCELOAD_LIST_SINGLE,
-                    [
-                        TextComponent::text(world.dimension.minecraft_name.to_string()),
-                        TextComponent::text(list_str),
-                    ],
-                )
-            } else {
-                TextComponent::translate_cross(
-                    translation::java::COMMANDS_FORCELOAD_LIST_MULTIPLE,
-                    translation::java::COMMANDS_FORCELOAD_LIST_MULTIPLE,
-                    [
-                        TextComponent::text(all_forced.len().to_string()),
-                        TextComponent::text(world.dimension.minecraft_name.to_string()),
-                        TextComponent::text(list_str),
-                    ],
-                )
-            };
-            context.source.send_feedback(text, false);
+            return Ok(0);
         }
 
-        Ok(i32::from(is_forced))
+        let list_str = all_forced
+            .iter()
+            .map(|pos| format!("[{}, {}]", pos.x, pos.y))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let text = if all_forced.len() == 1 {
+            TextComponent::translate_cross(
+                translation::java::COMMANDS_FORCELOAD_LIST_SINGLE,
+                translation::java::COMMANDS_FORCELOAD_LIST_SINGLE,
+                [
+                    TextComponent::text(dimension_name),
+                    TextComponent::text(list_str),
+                ],
+            )
+        } else {
+            TextComponent::translate_cross(
+                translation::java::COMMANDS_FORCELOAD_LIST_MULTIPLE,
+                translation::java::COMMANDS_FORCELOAD_LIST_MULTIPLE,
+                [
+                    TextComponent::text(all_forced.len().to_string()),
+                    TextComponent::text(dimension_name),
+                    TextComponent::text(list_str),
+                ],
+            )
+        };
+        context.source.send_feedback(text, false);
+
+        Ok(all_forced.len() as i32)
     }
 }
 

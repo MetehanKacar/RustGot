@@ -1052,6 +1052,40 @@ pub struct StructureGeneratorContext<'a> {
     pub structure_key: Option<pumpkin_data::structures::StructureKeys>,
 }
 
+/// Vanilla `SinglePieceStructure.findGenerationPoint`.
+///
+/// `None` when the lowest corner of the `width` x `depth` footprint is below sea level, else the
+/// stub's start position on top of the chunk center. Without a height sampler it stays at Y 64.
+pub fn single_piece_start(
+    context: &mut StructureGeneratorContext<'_>,
+    width: i32,
+    depth: i32,
+) -> Option<BlockPos> {
+    let min_x = crate::generation::positions::chunk_pos::start_block_x(context.chunk_x);
+    let min_z = crate::generation::positions::chunk_pos::start_block_z(context.chunk_z);
+    let center_x = crate::generation::positions::chunk_pos::get_center_x(context.chunk_x);
+    let center_z = crate::generation::positions::chunk_pos::get_center_z(context.chunk_z);
+    let Some(sampler) = context.height_sampler.as_deref_mut() else {
+        return Some(BlockPos::new(center_x, 64, center_z));
+    };
+    // `getFirstOccupiedHeight` is the WORLD_SURFACE_WG height minus one.
+    let lowest = [
+        (min_x, min_z),
+        (min_x, min_z + depth),
+        (min_x + width, min_z),
+        (min_x + width, min_z + depth),
+    ]
+    .into_iter()
+    .map(|(x, z)| sampler.estimate_height(x, z) - 1)
+    .min()
+    .unwrap_or(i32::MIN);
+    if lowest < context.sea_level {
+        return None;
+    }
+    let y = sampler.estimate_height(center_x, center_z) - 1;
+    Some(BlockPos::new(center_x, y, center_z))
+}
+
 #[must_use]
 pub fn create_chunk_random(seed: i64, chunk_x: i32, chunk_z: i32) -> RandomGenerator {
     let mut seeder = LegacyRand::from_seed(seed as u64);
