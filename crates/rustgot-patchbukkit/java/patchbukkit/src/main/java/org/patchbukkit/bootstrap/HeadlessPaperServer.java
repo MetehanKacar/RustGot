@@ -235,6 +235,9 @@ public final class HeadlessPaperServer {
         Boolean prevThreadState = enterPrimaryThread();
         try {
             if (SERVER != null && SERVER.server != null) {
+                // RustGot: like MinecraftServer.stopServer, so Bukkit.isStopping() is true while
+                // plugins are disabled (EssentialsX otherwise reports a /reload).
+                markStopping(SERVER);
                 SERVER.server.disablePlugins();
             }
             return true;
@@ -243,6 +246,16 @@ public final class HeadlessPaperServer {
             return false;
         } finally {
             restoreThreadState(prevThreadState);
+        }
+    }
+
+    private static void markStopping(net.minecraft.server.MinecraftServer server) {
+        try {
+            Field hasStopped = net.minecraft.server.MinecraftServer.class.getDeclaredField("hasStopped");
+            hasStopped.setAccessible(true);
+            hasStopped.setBoolean(server, true);
+        } catch (ReflectiveOperationException e) {
+            LOGGER.log(Level.WARNING, "[PatchBukkit] Could not mark the headless server as stopping", e);
         }
     }
 
