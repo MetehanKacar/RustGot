@@ -170,17 +170,26 @@ fn run(
     }
 }
 
-fn create_vm(install: &JavaInstall, max_heap_mb: u32) -> Result<JavaVM, JvmError> {
-    let mut args = InitArgsBuilder::new()
+/// JVM options every JVM embedded into `RustGot` needs, whoever builds the rest of its options.
+#[must_use]
+pub fn embedding_options(install: &JavaInstall, max_heap_mb: u32) -> Vec<String> {
+    let mut options = vec![
         // Leave SIGINT, SIGTERM and the Windows console handler to RustGot, so Ctrl+C still
         // stops the server cleanly instead of exiting from inside the JVM.
-        .option("-Xrs")
-        .option(format!("-Xmx{max_heap_mb}m"))
-        .option(format!("-Xms{}m", max_heap_mb.min(INITIAL_HEAP_MB)));
+        "-Xrs".to_owned(),
+        format!("-Xmx{max_heap_mb}m"),
+        format!("-Xms{}m", max_heap_mb.min(INITIAL_HEAP_MB)),
+    ];
     if install.feature >= 25 {
-        args = args.option("-XX:+UseCompactObjectHeaders");
+        options.push("-XX:+UseCompactObjectHeaders".to_owned());
     }
-    let args = args
+    options
+}
+
+fn create_vm(install: &JavaInstall, max_heap_mb: u32) -> Result<JavaVM, JvmError> {
+    let args = embedding_options(install, max_heap_mb)
+        .into_iter()
+        .fold(InitArgsBuilder::new(), InitArgsBuilder::option)
         .build()
         .map_err(|err| JvmError::Start(err.to_string()))?;
     let vm = JavaVM::with_libjvm(args, || Ok(&install.libjvm))

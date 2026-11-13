@@ -19,6 +19,7 @@ use rustgot_config::JvmConfig;
 use tracing::{error, info, warn};
 
 pub use discovery::JavaInstall;
+pub use vm::embedding_options;
 
 /// Directory, relative to the server directory, that holds Java runtimes `RustGot` downloaded.
 const CACHE_DIR: [&str; 2] = ["cache", "jvm"];
@@ -74,11 +75,7 @@ impl JavaPluginHost {
             return Ok(None);
         }
 
-        let install = find_or_install_java(
-            &server_dir.join(CACHE_DIR.iter().collect::<PathBuf>()),
-            config,
-        )
-        .await?;
+        let install = find_or_install_java(server_dir, config).await?;
         let max_heap_mb = config.max_heap_mb_for(plugins.len());
         info!(
             "Starting Java {} from {} with a {max_heap_mb} MiB heap",
@@ -116,12 +113,15 @@ fn read_descriptions(jars: Vec<PathBuf>) -> Vec<vm::PluginJar> {
         .collect()
 }
 
-async fn find_or_install_java(
-    cache_dir: &Path,
+/// Finds a suitable Java, or downloads `GraalVM` Community JDK into `<server_dir>/cache/jvm` when
+/// `jvm.auto-download` allows it.
+pub async fn find_or_install_java(
+    server_dir: &Path,
     config: &JvmConfig,
 ) -> Result<JavaInstall, JvmError> {
+    let cache_dir = &server_dir.join(CACHE_DIR.iter().collect::<PathBuf>());
     let min = config.min_java_version;
-    let search_dir = cache_dir.to_path_buf();
+    let search_dir = cache_dir.clone();
     let found = tokio::task::spawn_blocking(move || discovery::find_java(min, &search_dir))
         .await
         .map_err(io::Error::other)?;
