@@ -91,6 +91,12 @@ pub trait GenerationCache: HeightLimitView + BlockAccessor {
         self.get_top_y(&HeightMap::OceanFloorWg, x, z)
     }
     fn is_air(&self, local_pos: &Vector3<i32>) -> bool;
+    /// Vanilla `WorldGenRegion.scheduleTick` for fluids: the tick goes to the chunk holding `pos`.
+    fn schedule_fluid_tick(&mut self, pos: &Vector3<i32>, fluid: &'static Fluid) {
+        if let Some(chunk) = self.get_chunk_mut(pos.x >> 4, pos.z >> 4) {
+            chunk.schedule_fluid_tick(pos.x, pos.y, pos.z, fluid);
+        }
+    }
     fn get_biome_for_terrain_gen(&self, x: i32, y: i32, z: i32) -> &'static Biome;
     fn get_blending_data(
         &self,
