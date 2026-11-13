@@ -1001,6 +1001,34 @@ impl PluginManager {
             })
     }
 
+    /// Loads a plugin that is compiled into the server binary instead of read from a file.
+    ///
+    /// It goes through the same lifecycle as file plugins (`on_load` now, `on_unload` when
+    /// plugins are unloaded), but is never hot-reloaded.
+    pub async fn load_builtin_plugin(
+        self: &Arc<Self>,
+        server: &Arc<Server>,
+        instance: Arc<dyn Plugin>,
+        metadata: PluginMetadata,
+    ) -> Result<(), ManagerError> {
+        let path = PathBuf::from(format!("<builtin:{}>", metadata.name));
+        self.spawn_plugin_initialization(
+            server.clone(),
+            instance,
+            metadata,
+            Box::new(()),
+            Arc::new(loader::BuiltinLoader),
+            path,
+        )
+        .await?
+        .await
+        .map_err(|e| {
+            ManagerError::LoaderError(LoaderError::InitializationFailed(format!(
+                "Task join error: {e}"
+            )))
+        })
+    }
+
     /// Wait for a plugin to finish loading
     pub async fn wait_for_plugin(&self, plugin_name: &str) -> Result<(), ManagerError> {
         loop {

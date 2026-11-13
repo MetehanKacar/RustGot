@@ -80,3 +80,24 @@ pub enum LoaderError {
     #[error("Wasm plugin initialization error: {0}")]
     WasmInitializationError(Box<dyn std::error::Error + Send + Sync>),
 }
+
+/// Owner of plugins compiled into the server binary; it never loads anything from disk.
+pub(crate) struct BuiltinLoader;
+
+impl PluginLoader for BuiltinLoader {
+    fn load<'a>(&'a self, _path: &'a Path) -> PluginLoadFuture<'a> {
+        Box::pin(async { Err(LoaderError::RuntimeError("built-in plugin".to_owned())) })
+    }
+
+    fn can_load(&self, _path: &Path) -> bool {
+        false
+    }
+
+    fn unload(&self, _data: Box<dyn Any + Send + Sync>) -> PluginUnloadFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn can_unload(&self) -> bool {
+        false
+    }
+}

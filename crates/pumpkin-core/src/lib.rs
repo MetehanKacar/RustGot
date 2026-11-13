@@ -594,10 +594,14 @@ impl PumpkinServer {
         }
     }
 
-    /// Saves every player, kicks them, waits for their connection `tasks` to end, then unloads
-    /// plugins and saves the worlds.
+    /// Unloads plugins, saves every player, kicks them, waits for their connection `tasks` to
+    /// end, then saves the worlds.
     pub async fn shutdown(&self, tasks: &TaskTracker) {
         self.server.close_admission();
+
+        // Like Paper's `stopServer`, plugins are disabled while players and worlds are still
+        // there, so they can save what they keep about them.
+        self.unload_plugins().await;
 
         if let Err(e) = self
             .server
@@ -625,8 +629,6 @@ impl PumpkinServer {
 
         tasks.close();
         tasks.wait().await;
-
-        self.unload_plugins().await;
 
         info!("Starting save.");
 
