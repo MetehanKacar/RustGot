@@ -12,7 +12,7 @@ use pumpkin_data::{
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::{
     BlockDirection, HeightMap,
-    math::{block_box::BlockBox, position::BlockPos},
+    math::block_box::BlockBox,
     random::{RandomGenerator, RandomImpl},
 };
 
@@ -24,9 +24,9 @@ use crate::{
         structure::{
             piece::StructurePieceType,
             structures::{
-                StructureGenerator, StructureGeneratorContext, StructurePiece, StructurePieceBase,
-                StructurePiecesCollector, StructurePosition, WorldPortalExt,
-                add_scattered_feature_save_data,
+                BlockRandomizer, StructureGenerator, StructureGeneratorContext, StructurePiece,
+                StructurePieceBase, StructurePiecesCollector, StructurePosition, WorldPortalExt,
+                add_scattered_feature_save_data, single_piece_start,
             },
         },
     },
@@ -43,6 +43,7 @@ impl StructureGenerator for JungleTempleGenerator {
         &self,
         mut context: StructureGeneratorContext<'_>,
     ) -> Option<StructurePosition> {
+        let start_pos = single_piece_start(&mut context, WIDTH, DEPTH)?;
         let x = start_block_x(context.chunk_x);
         let z = start_block_z(context.chunk_z);
 
@@ -67,7 +68,7 @@ impl StructureGenerator for JungleTempleGenerator {
         }));
 
         Some(StructurePosition {
-            start_pos: BlockPos::new(x + (WIDTH / 2), 64, z + (DEPTH / 2)),
+            start_pos,
             collector: Arc::new(collector.into()),
         })
     }
@@ -122,139 +123,174 @@ impl StructurePieceBase for JungleTemplePiece {
         }
         let bb = chunk_box;
 
-        self.piece.fill(
-            chunk,
-            bb,
+        self.piece.fill_outline_random(
             0,
             -4,
             0,
             WIDTH - 1,
             0,
             DEPTH - 1,
-            MossStoneSelector::next(random),
-        );
-        self.piece
-            .fill(chunk, bb, 2, 1, 2, 9, 2, 2, MossStoneSelector::next(random));
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
+            2,
+            1,
+            2,
+            9,
+            2,
+            2,
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
+        );
+        self.piece.fill_outline_random(
             2,
             1,
             12,
             9,
             2,
             12,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             2,
             1,
             3,
             2,
             2,
             11,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             9,
             1,
             3,
             9,
             2,
             11,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             1,
             3,
             1,
             10,
             6,
             1,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             1,
             3,
             13,
             10,
             6,
             13,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             1,
             3,
             2,
             1,
             6,
             12,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             10,
             3,
             2,
             10,
             6,
             12,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             2,
             3,
             2,
             9,
             3,
             12,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             2,
             6,
             2,
             9,
             6,
             12,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             3,
             7,
             3,
             8,
             7,
             11,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             4,
             8,
             4,
             7,
             8,
             10,
-            MossStoneSelector::next(random),
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
         );
         let a = Block::AIR.default_state;
         self.piece.fill(chunk, bb, 3, 1, 3, 8, 2, 11, a);
@@ -271,84 +307,235 @@ impl StructurePieceBase for JungleTemplePiece {
         self.piece.add_block(chunk, a, 1, 5, 9, bb);
         self.piece.add_block(chunk, a, 10, 5, 9, bb);
         for z in (0..=14).step_by(14) {
-            self.piece
-                .fill(chunk, bb, 2, 4, z, 2, 5, z, MossStoneSelector::next(random));
-            self.piece
-                .fill(chunk, bb, 4, 4, z, 4, 5, z, MossStoneSelector::next(random));
-            self.piece
-                .fill(chunk, bb, 7, 4, z, 7, 5, z, MossStoneSelector::next(random));
-            self.piece
-                .fill(chunk, bb, 9, 4, z, 9, 5, z, MossStoneSelector::next(random));
+            self.piece.fill_outline_random(
+                2,
+                4,
+                z,
+                2,
+                5,
+                z,
+                &MossStoneSelector,
+                chunk,
+                false,
+                random,
+                bb,
+            );
+            self.piece.fill_outline_random(
+                4,
+                4,
+                z,
+                4,
+                5,
+                z,
+                &MossStoneSelector,
+                chunk,
+                false,
+                random,
+                bb,
+            );
+            self.piece.fill_outline_random(
+                7,
+                4,
+                z,
+                7,
+                5,
+                z,
+                &MossStoneSelector,
+                chunk,
+                false,
+                random,
+                bb,
+            );
+            self.piece.fill_outline_random(
+                9,
+                4,
+                z,
+                9,
+                5,
+                z,
+                &MossStoneSelector,
+                chunk,
+                false,
+                random,
+                bb,
+            );
         }
-        self.piece
-            .fill(chunk, bb, 5, 6, 0, 6, 6, 0, MossStoneSelector::next(random));
+        self.piece.fill_outline_random(
+            5,
+            6,
+            0,
+            6,
+            6,
+            0,
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
+        );
 
         for x in (0..=11).step_by(11) {
             for z in (2..=12).step_by(2) {
-                self.piece
-                    .fill(chunk, bb, x, 4, z, x, 5, z, MossStoneSelector::next(random));
+                self.piece.fill_outline_random(
+                    x,
+                    4,
+                    z,
+                    x,
+                    5,
+                    z,
+                    &MossStoneSelector,
+                    chunk,
+                    false,
+                    random,
+                    bb,
+                );
             }
 
-            self.piece
-                .fill(chunk, bb, x, 6, 5, x, 6, 5, MossStoneSelector::next(random));
-            self.piece
-                .fill(chunk, bb, x, 6, 9, x, 6, 9, MossStoneSelector::next(random));
+            self.piece.fill_outline_random(
+                x,
+                6,
+                5,
+                x,
+                6,
+                5,
+                &MossStoneSelector,
+                chunk,
+                false,
+                random,
+                bb,
+            );
+            self.piece.fill_outline_random(
+                x,
+                6,
+                9,
+                x,
+                6,
+                9,
+                &MossStoneSelector,
+                chunk,
+                false,
+                random,
+                bb,
+            );
         }
 
-        self.piece
-            .fill(chunk, bb, 2, 7, 2, 2, 9, 2, MossStoneSelector::next(random));
-        self.piece
-            .fill(chunk, bb, 9, 7, 2, 9, 9, 2, MossStoneSelector::next(random));
-        self.piece.fill(
+        self.piece.fill_outline_random(
+            2,
+            7,
+            2,
+            2,
+            9,
+            2,
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
+            9,
+            7,
+            2,
+            9,
+            9,
+            2,
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
+        );
+        self.piece.fill_outline_random(
             2,
             7,
             12,
             2,
             9,
             12,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             9,
             7,
             12,
             9,
             9,
             12,
-            MossStoneSelector::next(random),
-        );
-        self.piece
-            .fill(chunk, bb, 4, 9, 4, 4, 9, 4, MossStoneSelector::next(random));
-        self.piece
-            .fill(chunk, bb, 7, 9, 4, 7, 9, 4, MossStoneSelector::next(random));
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
+            4,
+            9,
+            4,
+            4,
+            9,
+            4,
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
+        );
+        self.piece.fill_outline_random(
+            7,
+            9,
+            4,
+            7,
+            9,
+            4,
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
+        );
+        self.piece.fill_outline_random(
             4,
             9,
             10,
             4,
             9,
             10,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
-            7,
-            9,
-            10,
-            7,
-            9,
-            10,
-            MossStoneSelector::next(random),
         );
-        self.piece
-            .fill(chunk, bb, 5, 9, 7, 6, 9, 7, MossStoneSelector::next(random));
+        self.piece.fill_outline_random(
+            7,
+            9,
+            10,
+            7,
+            9,
+            10,
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
+        );
+        self.piece.fill_outline_random(
+            5,
+            9,
+            7,
+            6,
+            9,
+            7,
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
+        );
         let east_stairs = Self::cobblestone_stairs(HorizontalFacing::East);
         let west_stairs = Self::cobblestone_stairs(HorizontalFacing::West);
         let south_stairs = Self::cobblestone_stairs(HorizontalFacing::South);
@@ -367,23 +554,58 @@ impl StructurePieceBase for JungleTemplePiece {
         self.piece.add_block(chunk, north_stairs, 7, 1, 8, bb);
         self.piece.add_block(chunk, north_stairs, 7, 2, 9, bb);
         self.piece.add_block(chunk, north_stairs, 7, 3, 10, bb);
-        self.piece
-            .fill(chunk, bb, 4, 1, 9, 4, 1, 9, MossStoneSelector::next(random));
-        self.piece
-            .fill(chunk, bb, 7, 1, 9, 7, 1, 9, MossStoneSelector::next(random));
-        self.piece.fill(
+        self.piece.fill_outline_random(
+            4,
+            1,
+            9,
+            4,
+            1,
+            9,
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
+            7,
+            1,
+            9,
+            7,
+            1,
+            9,
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
+        );
+        self.piece.fill_outline_random(
             4,
             1,
             10,
             7,
             2,
             10,
-            MossStoneSelector::next(random),
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
         );
-        self.piece
-            .fill(chunk, bb, 5, 4, 5, 6, 4, 5, MossStoneSelector::next(random));
+        self.piece.fill_outline_random(
+            5,
+            4,
+            5,
+            6,
+            4,
+            5,
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
+        );
         self.piece.add_block(chunk, east_stairs, 4, 4, 5, bb);
         self.piece.add_block(chunk, west_stairs, 7, 4, 5, bb);
         for i in 0..4 {
@@ -399,75 +621,87 @@ impl StructurePieceBase for JungleTemplePiece {
         self.piece.fill(chunk, bb, 1, -3, 1, 3, -1, 13, a);
         self.piece.fill(chunk, bb, 1, -3, 1, 9, -1, 5, a);
         for z in (1..=13).step_by(2) {
-            self.piece.fill(
-                chunk,
-                bb,
+            self.piece.fill_outline_random(
                 1,
                 -3,
                 z,
                 1,
                 -2,
                 z,
-                MossStoneSelector::next(random),
+                &MossStoneSelector,
+                chunk,
+                false,
+                random,
+                bb,
             );
         }
         for z in (2..=12).step_by(2) {
-            self.piece.fill(
-                chunk,
-                bb,
+            self.piece.fill_outline_random(
                 1,
                 -1,
                 z,
                 3,
                 -1,
                 z,
-                MossStoneSelector::next(random),
+                &MossStoneSelector,
+                chunk,
+                false,
+                random,
+                bb,
             );
         }
 
-        self.piece.fill(
-            chunk,
-            bb,
+        self.piece.fill_outline_random(
             2,
             -2,
             1,
             5,
             -2,
             1,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             7,
             -2,
             1,
             9,
             -2,
             1,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             6,
             -3,
             1,
             6,
             -3,
             1,
-            MossStoneSelector::next(random),
-        );
-        self.piece.fill(
+            &MossStoneSelector,
             chunk,
+            false,
+            random,
             bb,
+        );
+        self.piece.fill_outline_random(
             6,
             -1,
             1,
             6,
             -1,
             1,
-            MossStoneSelector::next(random),
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
         );
         self.piece.add_block(
             chunk,
@@ -658,16 +892,18 @@ impl StructurePieceBase for JungleTemplePiece {
             .add_block(chunk, Block::MOSSY_COBBLESTONE.default_state, 7, -1, 5, bb);
         self.piece
             .add_block(chunk, Block::MOSSY_COBBLESTONE.default_state, 8, -3, 5, bb);
-        self.piece.fill(
-            chunk,
-            bb,
+        self.piece.fill_outline_random(
             9,
             -1,
             1,
             9,
             -1,
             5,
-            MossStoneSelector::next(random),
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
         );
         self.piece.fill(chunk, bb, 8, -3, 8, 10, -1, 10, a);
         self.piece.add_block(
@@ -703,27 +939,31 @@ impl StructurePieceBase for JungleTemplePiece {
         self.piece.add_block(chunk, lever, 8, -2, 12, bb);
         self.piece.add_block(chunk, lever, 9, -2, 12, bb);
         self.piece.add_block(chunk, lever, 10, -2, 12, bb);
-        self.piece.fill(
-            chunk,
-            bb,
+        self.piece.fill_outline_random(
             8,
             -3,
             8,
             8,
             -3,
             10,
-            MossStoneSelector::next(random),
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
         );
-        self.piece.fill(
-            chunk,
-            bb,
+        self.piece.fill_outline_random(
             10,
             -3,
             8,
             10,
             -3,
             10,
-            MossStoneSelector::next(random),
+            &MossStoneSelector,
+            chunk,
+            false,
+            random,
+            bb,
         );
         self.piece
             .add_block(chunk, Block::MOSSY_COBBLESTONE.default_state, 10, -2, 9, bb);
@@ -816,8 +1056,6 @@ impl JungleTemplePiece {
         self.height_position = average;
         true
     }
-    // This allows you to call MossStoneSelector::next(random) SS is stoneselector
-    const SS: MossStoneSelector = MossStoneSelector;
     fn cobblestone_stairs(facing: HorizontalFacing) -> &'static BlockState {
         let mut props = WhiteWoolStairsLikeProperties::default(&Block::COBBLESTONE_STAIRS);
         props.facing = facing;
@@ -877,11 +1115,11 @@ impl JungleTemplePiece {
         BlockState::from_id(props.to_state_id(&Block::TRIPWIRE_HOOK))
     }
 }
-// Full implementation of the BlockSelector trait
+/// Vanilla `JungleTemplePiece.MossStoneSelector`, drawn once per block of a box.
 struct MossStoneSelector;
 
-impl MossStoneSelector {
-    fn next(random: &mut RandomGenerator) -> &BlockState {
+impl BlockRandomizer for MossStoneSelector {
+    fn get_block(&self, random: &mut RandomGenerator, _is_border: bool) -> &BlockState {
         if random.next_f32() < 0.4 {
             Block::COBBLESTONE.default_state
         } else {

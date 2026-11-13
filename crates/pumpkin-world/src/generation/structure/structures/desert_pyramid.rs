@@ -23,6 +23,7 @@ use crate::{
             structures::{
                 StructureGenerator, StructureGeneratorContext, StructurePiece, StructurePieceBase,
                 StructurePiecesCollector, StructurePosition, add_scattered_feature_save_data,
+                single_piece_start,
             },
         },
     },
@@ -39,6 +40,7 @@ impl StructureGenerator for DesertPyramidGenerator {
         &self,
         mut context: StructureGeneratorContext<'_>,
     ) -> Option<StructurePosition> {
+        let start_pos = single_piece_start(&mut context, WIDTH, DEPTH)?;
         let x = start_block_x(context.chunk_x);
         let z = start_block_z(context.chunk_z);
 
@@ -60,7 +62,7 @@ impl StructureGenerator for DesertPyramidGenerator {
         }));
 
         Some(StructurePosition {
-            start_pos: BlockPos::new(x + (WIDTH / 2), 64, z + (DEPTH / 2)),
+            start_pos,
             collector: Arc::new(collector.into()),
         })
     }
