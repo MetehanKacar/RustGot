@@ -43,18 +43,18 @@ pub mod random_patch;
 pub mod random_selector;
 pub mod replace_single_block;
 pub mod root_system;
-pub mod sequence;
-pub mod template;
 pub mod scattered_ore;
 pub mod sculk;
 pub mod sculk_patch;
 pub mod sea_pickle;
 pub mod seagrass;
+pub mod sequence;
 pub mod simple_block;
 pub mod simple_random_selector;
 pub mod single_block_pillar;
 pub mod spring_feature;
 pub mod stepped_column_cluster;
+pub mod template;
 pub mod tree;
 pub mod twisting_vines;
 pub mod underwater_magma;
@@ -65,116 +65,72 @@ pub mod waterlogged_vegetation_patch;
 pub mod weeping_vines;
 pub mod weighted_random_selector;
 
+mod java_hash_set;
+
+use java_hash_set::{JavaHashSet, JavaKey};
 use pumpkin_util::math::position::BlockPos;
 
 /// A hash set of [`BlockPos`] that preserves `OpenJDK` `java.util.HashSet<BlockPos>` iteration order.
-#[derive(Clone, Debug)]
-pub struct JavaBlockPosHashSet {
-    buckets: Vec<Vec<(i32, BlockPos)>>,
-    len: usize,
-    threshold: usize,
-}
+#[derive(Clone, Debug, Default)]
+pub struct JavaBlockPosHashSet(JavaHashSet<JavaBlockPos>);
 
-impl Default for JavaBlockPosHashSet {
-    fn default() -> Self {
-        Self::new()
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JavaBlockPos(BlockPos);
+
+impl JavaKey for JavaBlockPos {
+    /// Vanilla `Vec3i.hashCode`.
+    fn java_hash(&self) -> i32 {
+        let pos = self.0.0;
+        pos.y
+            .wrapping_add(pos.z.wrapping_mul(31))
+            .wrapping_mul(31)
+            .wrapping_add(pos.x)
+    }
+
+    // `BlockPos` inherits `Comparable<Vec3i>`, which Java's `HashMap` does not use for it, so
+    // equal hashes fall back to identity hashes; that order is arbitrary in vanilla as well.
+    fn tie_break(&self, _other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Less
     }
 }
 
 impl JavaBlockPosHashSet {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            buckets: vec![Vec::new(); 16],
-            len: 0,
-            threshold: 12,
-        }
-    }
-
-    const fn hash(pos: BlockPos) -> i32 {
-        let h = pos
-            .0
-            .y
-            .wrapping_add(pos.0.z.wrapping_mul(31))
-            .wrapping_mul(31)
-            .wrapping_add(pos.0.x);
-        h ^ ((h as u32 >> 16) as i32)
+        Self::default()
     }
 
     pub fn insert(&mut self, pos: BlockPos) -> bool {
-        let hash = Self::hash(pos);
-        let cap = self.buckets.len();
-        let idx = (hash as usize) & (cap - 1);
-        if self.buckets[idx].iter().any(|&(_, p)| p == pos) {
-            return false;
-        }
-        self.buckets[idx].push((hash, pos));
-        self.len += 1;
-        if self.len > self.threshold {
-            self.resize();
-        }
-        true
+        self.0.insert(JavaBlockPos(pos))
     }
 
     #[must_use]
     pub fn contains(&self, pos: &BlockPos) -> bool {
-        let hash = Self::hash(*pos);
-        let idx = (hash as usize) & (self.buckets.len() - 1);
-        self.buckets[idx].iter().any(|(_, p)| p == pos)
+        self.0.contains(&JavaBlockPos(*pos))
     }
 
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.len == 0
+        self.0.is_empty()
     }
 
     #[must_use]
     pub const fn len(&self) -> usize {
-        self.len
+        self.0.len()
     }
 
+    /// `iterator().next()` followed by `iterator.remove()`.
     pub fn pop_first(&mut self) -> Option<BlockPos> {
-        for bucket in &mut self.buckets {
-            if !bucket.is_empty() {
-                self.len -= 1;
-                return Some(bucket.remove(0).1);
-            }
-        }
-        None
+        self.0.pop_first().map(|pos| pos.0)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &BlockPos> {
-        self.buckets
-            .iter()
-            .flat_map(|bucket| bucket.iter().map(|(_, pos)| pos))
+        self.0.iter().map(|pos| &pos.0)
     }
 
     #[must_use]
     pub fn into_vec(self) -> Vec<BlockPos> {
-        let mut out = Vec::with_capacity(self.len);
-        for bucket in self.buckets {
-            for (_, pos) in bucket {
-                out.push(pos);
-            }
-        }
-        out
-    }
-
-    fn resize(&mut self) {
-        let old_cap = self.buckets.len();
-        let new_cap = old_cap << 1;
-        self.threshold <<= 1;
-        let mut new_buckets = vec![Vec::new(); new_cap];
-        for (j, bucket) in self.buckets.drain(..).enumerate() {
-            for (hash, pos) in bucket {
-                if (hash as usize & old_cap) == 0 {
-                    new_buckets[j].push((hash, pos));
-                } else {
-                    new_buckets[j + old_cap].push((hash, pos));
-                }
-            }
-        }
-        self.buckets = new_buckets;
+        self.iter().copied().collect()
     }
 }
 
@@ -188,29 +144,16 @@ impl FromIterator<BlockPos> for JavaBlockPosHashSet {
     }
 }
 
-type BucketEntryMap<'a> =
-    std::iter::Map<std::slice::Iter<'a, (i32, BlockPos)>, fn(&(i32, BlockPos)) -> &BlockPos>;
-
 impl<'a> IntoIterator for &'a JavaBlockPosHashSet {
     type Item = &'a BlockPos;
-    type IntoIter = std::iter::FlatMap<
-        std::slice::Iter<'a, Vec<(i32, BlockPos)>>,
-        BucketEntryMap<'a>,
-        fn(&'a Vec<(i32, BlockPos)>) -> BucketEntryMap<'a>,
-    >;
+    type IntoIter =
+        std::iter::Map<java_hash_set::Iter<'a, JavaBlockPos>, fn(&JavaBlockPos) -> &BlockPos>;
 
     fn into_iter(self) -> Self::IntoIter {
-        const fn map_entry((_, pos): &(i32, BlockPos)) -> &BlockPos {
-            pos
+        const fn unwrap(pos: &JavaBlockPos) -> &BlockPos {
+            &pos.0
         }
-        #[expect(
-            clippy::ptr_arg,
-            reason = "slice::Iter<Vec<...>> passes &Vec to fn pointer"
-        )]
-        fn map_bucket(bucket: &Vec<(i32, BlockPos)>) -> BucketEntryMap<'_> {
-            bucket.iter().map(map_entry)
-        }
-        self.buckets.iter().flat_map(map_bucket)
+        self.0.iter().map(unwrap)
     }
 }
 
@@ -220,5 +163,99 @@ impl IntoIterator for JavaBlockPosHashSet {
 
     fn into_iter(self) -> Self::IntoIter {
         self.into_vec().into_iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pumpkin_util::random::{RandomImpl, legacy_rand::LegacyRand};
+    use rustc_hash::FxHashSet;
+
+    /// `(seed, FNV-1a of the orders)`, printed by `java.util.HashSet` on `OpenJDK` 25 from a small
+    /// program kept outside the repository. It builds the set below from `new Random(seed)`,
+    /// records its order, pops half of it through `iterator().remove()` (re-adding a neighbour
+    /// every third pop) and records the order again. Seeds from 630 on made tree bins; from 5469
+    /// on, a set without tree bins iterates differently.
+    const JAVA_ORDERS: [(i64, u64); 15] = [
+        (0, 0x8128_1577_9422_c51a),
+        (1, 0xe842_ccc5_8782_ae15),
+        (2, 0xf9da_6a79_fab6_6767),
+        (630, 0xbe40_c366_38ee_744e),
+        (1129, 0xf294_3a65_e3e6_c77e),
+        (5469, 0x765b_3081_a0c5_700f),
+        (15971, 0x6b29_a161_d152_4494),
+        (22608, 0x1258_0c52_cad1_c3ba),
+        (22947, 0xb2b7_8008_396f_f5b2),
+        (25015, 0x82d5_cbd8_9acc_3ab5),
+        (26244, 0x3d48_7659_d96c_65d8),
+        (29926, 0x0cd4_4855_3f01_9534),
+        (33591, 0x4ba3_784a_5b9d_637a),
+        (41285, 0x6450_49cc_ad47_2bb1),
+        (42678, 0x0bfa_9927_b1cc_69ad),
+    ];
+
+    struct Fnv(u64);
+    impl Fnv {
+        fn mix(&mut self, pos: BlockPos) {
+            for v in [pos.0.x, pos.0.y, pos.0.z] {
+                for byte in v.to_le_bytes() {
+                    self.0 ^= u64::from(byte);
+                    self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+                }
+            }
+        }
+    }
+
+    fn add(set: &mut JavaBlockPosHashSet, hashes: &mut FxHashSet<i32>, pos: BlockPos) {
+        let hash = JavaBlockPos(pos).java_hash();
+        // Equal hashes would order by identity hash in Java; the generator skips them.
+        if !set.contains(&pos) && hashes.insert(hash) {
+            set.insert(pos);
+        }
+    }
+
+    fn java_order_hash(seed: i64) -> u64 {
+        let mut r = LegacyRand::from_seed(seed as u64);
+        let bx = r.next_bounded_i32(60000) - 30000;
+        let bz = r.next_bounded_i32(60000) - 30000;
+        let by = r.next_bounded_i32(300) - 60;
+        let radius = 2 + r.next_bounded_i32(7);
+        let layers = 1 + r.next_bounded_i32(3);
+        let keep = 50 + r.next_bounded_i32(51);
+        let mut set = JavaBlockPosHashSet::new();
+        let mut hashes = FxHashSet::default();
+        for dy in 0..layers {
+            for dx in -radius..=radius {
+                for dz in -radius..=radius {
+                    if dx * dx + dz * dz <= radius * radius && r.next_bounded_i32(100) < keep {
+                        add(
+                            &mut set,
+                            &mut hashes,
+                            BlockPos::new(bx + dx, by + dy, bz + dz),
+                        );
+                    }
+                }
+            }
+        }
+        let mut fnv = Fnv(0xcbf2_9ce4_8422_2325);
+        set.iter().for_each(|pos| fnv.mix(*pos));
+        for i in 0..set.len() / 2 {
+            let pos = set.pop_first().unwrap();
+            fnv.mix(pos);
+            if i % 3 == 0 {
+                let neighbour = BlockPos::new(pos.0.x + 1, pos.0.y, pos.0.z - 1);
+                add(&mut set, &mut hashes, neighbour);
+            }
+        }
+        set.iter().for_each(|pos| fnv.mix(*pos));
+        fnv.0
+    }
+
+    #[test]
+    fn iteration_order_matches_java_hash_set() {
+        for (seed, expected) in JAVA_ORDERS {
+            assert_eq!(java_order_hash(seed), expected, "seed {seed}");
+        }
     }
 }
