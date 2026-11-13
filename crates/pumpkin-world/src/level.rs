@@ -704,6 +704,17 @@ impl Level {
         f(&chunk)
     }
 
+    /// Vanilla `LevelChunk.registerTickContainerInLevel`: the ticks a chunk was generated or
+    /// saved with run once it is loaded.
+    pub fn register_chunk_ticks(&self, pos: &Vector2<i32>) {
+        let has_ticks = self.loaded_chunks.get(pos).is_some_and(|chunk| {
+            chunk.block_ticks.has_ticks() || chunk.fluid_ticks.has_ticks()
+        });
+        if has_ticks {
+            self.chunks_with_scheduled_ticks.insert(*pos);
+        }
+    }
+
     pub fn loaded_chunk_changes(&self) -> impl Iterator<Item = LoadedChunkChange> + '_ {
         std::iter::from_fn(|| self.loaded_chunk_changes.pop())
     }
