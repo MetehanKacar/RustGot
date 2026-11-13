@@ -22,6 +22,7 @@ use crate::{
             structures::{
                 StructureGenerator, StructureGeneratorContext, StructurePieceBase,
                 StructurePiecesCollector, StructurePosition, WorldPortalExt,
+                add_scattered_feature_save_data,
             },
         },
     },
@@ -124,6 +125,18 @@ impl SwampHutPiece {
 }
 
 impl StructurePieceBase for SwampHutPiece {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        let piece = &self.shiftable_structure_piece;
+        add_scattered_feature_save_data(
+            tag,
+            &piece.piece.bounding_box,
+            piece.piece.facing,
+            piece.height_position(),
+        );
+        tag.put_bool("Witch", self.spawned_witch);
+        tag.put_bool("Cat", self.spawned_cat);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

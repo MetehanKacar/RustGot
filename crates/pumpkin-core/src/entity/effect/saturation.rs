@@ -14,10 +14,16 @@ impl MobEffect for SaturationMobEffect {
             && let Some(player) = entity.get_player()
         {
             let hunger = amplifier + 1;
+            let modifier = world
+                .purpur()
+                .gameplay_mechanics
+                .mob_effects
+                .saturation_regen_amount;
             player.hunger_manager.add_hunger(hunger);
+            // FoodConstants.saturationByModifier
             player
                 .hunger_manager
-                .add_saturation(f32::from(hunger) * 2.0);
+                .add_saturation(f32::from(hunger) * modifier * 2.0);
         }
     }
 }

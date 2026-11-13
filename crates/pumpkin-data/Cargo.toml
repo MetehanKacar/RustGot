@@ -148,7 +148,7 @@ composter = []
 flower_pot = []
 suspicious_effects = ["effect"]
 effect = []
-structures = []
+structures = ["biome"]
 potion = ["potion_brewing"]
 material_rule = []
 noise_settings = []
@@ -192,9 +192,6 @@ criterion.workspace = true
 [[bench]]
 name = "has_random_ticks"
 harness = false
-
-[package.metadata.cargo-machete]
-ignored = ["phf"]
 
 [lints]
 workspace = true

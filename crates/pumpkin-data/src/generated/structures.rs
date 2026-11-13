@@ -329,18 +329,13 @@ pub enum BoundingBoxType {
     Piece,
     Full,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SpawnEntry {
-    pub entity_type: &'static str,
-    pub min_count: u32,
-    pub max_count: u32,
-    pub weight: u32,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc = r" Vanilla `StructureSpawnOverride`: the mobs that spawn in the structure instead of"]
+#[doc = r" the biome's, for one mob category."]
+#[derive(Clone, Copy, Debug)]
 pub struct SpawnOverride {
     pub category: &'static str,
     pub bounding_box: BoundingBoxType,
-    pub spawns: &'static [SpawnEntry],
+    pub spawns: &'static [crate::biome::Spawner],
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeightProvider {
@@ -1120,35 +1115,35 @@ impl Structure {
             category: "monster",
             bounding_box: BoundingBoxType::Piece,
             spawns: &[
-                SpawnEntry {
-                    entity_type: "minecraft:blaze",
-                    min_count: 1u32,
-                    max_count: 1u32,
-                    weight: 10u32,
+                crate::biome::Spawner {
+                    r#type: "minecraft:blaze",
+                    min_count: 2i32,
+                    max_count: 3i32,
+                    weight: 10i32,
                 },
-                SpawnEntry {
-                    entity_type: "minecraft:zombified_piglin",
-                    min_count: 1u32,
-                    max_count: 1u32,
-                    weight: 5u32,
+                crate::biome::Spawner {
+                    r#type: "minecraft:zombified_piglin",
+                    min_count: 4i32,
+                    max_count: 4i32,
+                    weight: 5i32,
                 },
-                SpawnEntry {
-                    entity_type: "minecraft:wither_skeleton",
-                    min_count: 1u32,
-                    max_count: 1u32,
-                    weight: 8u32,
+                crate::biome::Spawner {
+                    r#type: "minecraft:wither_skeleton",
+                    min_count: 5i32,
+                    max_count: 5i32,
+                    weight: 8i32,
                 },
-                SpawnEntry {
-                    entity_type: "minecraft:skeleton",
-                    min_count: 1u32,
-                    max_count: 1u32,
-                    weight: 2u32,
+                crate::biome::Spawner {
+                    r#type: "minecraft:skeleton",
+                    min_count: 5i32,
+                    max_count: 5i32,
+                    weight: 2i32,
                 },
-                SpawnEntry {
-                    entity_type: "minecraft:magma_cube",
-                    min_count: 1u32,
-                    max_count: 1u32,
-                    weight: 3u32,
+                crate::biome::Spawner {
+                    r#type: "minecraft:magma_cube",
+                    min_count: 4i32,
+                    max_count: 4i32,
+                    weight: 3i32,
                 },
             ],
         }],
@@ -1292,11 +1287,11 @@ impl Structure {
             SpawnOverride {
                 category: "monster",
                 bounding_box: BoundingBoxType::Full,
-                spawns: &[SpawnEntry {
-                    entity_type: "minecraft:guardian",
-                    min_count: 1u32,
-                    max_count: 1u32,
-                    weight: 1u32,
+                spawns: &[crate::biome::Spawner {
+                    r#type: "minecraft:guardian",
+                    min_count: 2i32,
+                    max_count: 4i32,
+                    weight: 1i32,
                 }],
             },
             SpawnOverride {
@@ -1401,11 +1396,11 @@ impl Structure {
         spawn_overrides: &[SpawnOverride {
             category: "monster",
             bounding_box: BoundingBoxType::Full,
-            spawns: &[SpawnEntry {
-                entity_type: "minecraft:pillager",
-                min_count: 1u32,
-                max_count: 1u32,
-                weight: 1u32,
+            spawns: &[crate::biome::Spawner {
+                r#type: "minecraft:pillager",
+                min_count: 1i32,
+                max_count: 1i32,
+                weight: 1i32,
             }],
         }],
         is_beached: None,
@@ -1653,21 +1648,21 @@ impl Structure {
             SpawnOverride {
                 category: "creature",
                 bounding_box: BoundingBoxType::Piece,
-                spawns: &[SpawnEntry {
-                    entity_type: "minecraft:cat",
-                    min_count: 1u32,
-                    max_count: 1u32,
-                    weight: 1u32,
+                spawns: &[crate::biome::Spawner {
+                    r#type: "minecraft:cat",
+                    min_count: 1i32,
+                    max_count: 1i32,
+                    weight: 1i32,
                 }],
             },
             SpawnOverride {
                 category: "monster",
                 bounding_box: BoundingBoxType::Piece,
-                spawns: &[SpawnEntry {
-                    entity_type: "minecraft:witch",
-                    min_count: 1u32,
-                    max_count: 1u32,
-                    weight: 1u32,
+                spawns: &[crate::biome::Spawner {
+                    r#type: "minecraft:witch",
+                    min_count: 1i32,
+                    max_count: 1i32,
+                    weight: 1i32,
                 }],
             },
         ],

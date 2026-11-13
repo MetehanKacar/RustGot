@@ -75,7 +75,12 @@ impl BlockBehaviour for FarmlandBlock {
                     |player| !args.world.is_in_spawn_protection(player, &pos),
                 );
                 let dim = entity.entity_dimension.load();
-                if can_trample && dim.width * dim.width * dim.height > 0.512 {
+                let blocks = &args.world.purpur().blocks;
+                if can_trample
+                    && dim.width * dim.width * dim.height > 0.512
+                    && !blocks.farmland_disable_trampling
+                    && (!blocks.farmland_only_players_trample || args.entity.get_player().is_some())
+                {
                     args.world.set_block_state(
                         &pos,
                         Block::DIRT.default_state.id,

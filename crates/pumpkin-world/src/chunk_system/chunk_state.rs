@@ -289,13 +289,15 @@ impl Chunk {
                 dirty: AtomicBool::new(false),
                 inhabited_time: AtomicU64::new(0),
                 custom_data: Mutex::new(NbtCompound::new()),
+                structures: std::sync::OnceLock::new(),
             })),
         ) {
             Self::Proto(proto) => proto,
             Self::Level(_) => panic!("Cannot upgrade a Level chunk"),
         };
 
-        let proto_chunk = *proto_chunk_box;
+        let mut proto_chunk = *proto_chunk_box;
+        let structures = crate::generation::structure::proto_chunk_structures(&mut proto_chunk);
 
         let sections = Self::build_level_sections(&proto_chunk, dimension);
         let heightmaps = Self::build_level_heightmaps(&proto_chunk, dimension.min_y);
@@ -336,6 +338,7 @@ impl Chunk {
             blending_data: proto_chunk.blending_data,
             inhabited_time: AtomicU64::new(0),
             custom_data: Mutex::new(NbtCompound::new()),
+            structures: std::sync::OnceLock::from(structures),
         };
 
         *self = Self::Level(Arc::new(chunk));

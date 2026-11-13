@@ -1,5 +1,10 @@
 use std::sync::Arc;
 
+use crate::generation::structure::structures::{
+    add_template_save_data, mirror_legacy_name, namespaced_template, rotation_legacy_name,
+};
+use pumpkin_nbt::compound::NbtCompound;
+
 use pumpkin_data::{
     Block, BlockId, BlockState, Mirror, Rotation, block_properties::blocks_movement,
     structures::StructureKeys,
@@ -732,6 +737,48 @@ impl RuinedPortalPiece {
 }
 
 impl StructurePieceBase for RuinedPortalPiece {
+    fn orientation(&self) -> Option<pumpkin_util::BlockDirection> {
+        // Vanilla `TemplateStructurePiece` always faces north.
+        Some(pumpkin_util::BlockDirection::North)
+    }
+
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        add_template_save_data(
+            tag,
+            &namespaced_template(&self.template_name),
+            self.template_position,
+        );
+        tag.put_string(
+            "Rotation",
+            rotation_legacy_name(self.place_settings.get_rotation()).to_string(),
+        );
+        tag.put_string(
+            "Mirror",
+            mirror_legacy_name(self.place_settings.get_mirror()).to_string(),
+        );
+        let vertical_placement = match self.vertical_placement {
+            VerticalPlacement::OnLandSurface => "on_land_surface",
+            VerticalPlacement::PartlyBuried => "partly_buried",
+            VerticalPlacement::OnOceanFloor => "on_ocean_floor",
+            VerticalPlacement::InMountain => "in_mountain",
+            VerticalPlacement::Underground => "underground",
+            VerticalPlacement::InNether => "in_nether",
+        };
+        tag.put_string("VerticalPlacement", vertical_placement.to_string());
+        let properties = &self.properties;
+        let mut properties_tag = NbtCompound::new();
+        properties_tag.put_bool("cold", properties.cold);
+        properties_tag.put_float("mossiness", properties.mossiness);
+        properties_tag.put_bool("air_pocket", properties.air_pocket);
+        properties_tag.put_bool("overgrown", properties.overgrown);
+        properties_tag.put_bool("vines", properties.vines);
+        properties_tag.put_bool(
+            "replace_with_blackstone",
+            properties.replace_with_blackstone,
+        );
+        tag.put_compound("Properties", properties_tag);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

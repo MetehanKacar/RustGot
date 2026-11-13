@@ -10,6 +10,8 @@ use pumpkin_util::{
     random::{RandomGenerator, RandomImpl},
 };
 
+use pumpkin_nbt::compound::NbtCompound;
+
 use crate::{
     ProtoChunk,
     generation::structure::{
@@ -64,6 +66,11 @@ impl LibraryPiece {
 }
 
 impl StructurePieceBase for LibraryPiece {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        self.piece.add_additional_save_data(tag);
+        tag.put_bool("Tall", self.tall);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

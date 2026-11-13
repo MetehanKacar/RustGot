@@ -5,6 +5,8 @@ use pumpkin_util::{
     random::{RandomGenerator, RandomImpl},
 };
 
+use pumpkin_nbt::compound::NbtCompound;
+
 use crate::{
     ProtoChunk,
     generation::structure::{
@@ -53,6 +55,10 @@ impl CorridorLeftTurnPiece {
 }
 
 impl StructurePieceBase for CorridorLeftTurnPiece {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        tag.put_bool("Chest", self.contains_chest);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

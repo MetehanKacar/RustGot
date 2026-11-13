@@ -142,6 +142,15 @@ pub async fn io_read_work(
             match data {
                 Loaded(chunk) => {
                     let pos = ChunkPos::new(chunk.x, chunk.z);
+                    if chunk
+                        .structures
+                        .get()
+                        .is_none_or(|structures| !structures.is_empty())
+                    {
+                        level
+                            .chunk_system_tasks
+                            .spawn(level.clone().load_chunk_structures(chunk.clone()));
+                    }
                     let level = level.clone();
                     let result = run_blocking(move || process_loaded_chunk(chunk, &level)).await;
                     let received = match result {

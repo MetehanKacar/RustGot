@@ -110,15 +110,34 @@ pub struct SpawnOverrideStruct {
 pub struct SpawnEntryStruct {
     #[serde(rename = "type")]
     pub entity_type: String,
-    #[serde(default = "default_spawn_count", rename = "minCount")]
-    pub min_count: u32,
-    #[serde(default = "default_spawn_count", rename = "maxCount")]
-    pub max_count: u32,
+    /// A constant or a `minecraft:uniform` int provider, as in biome spawners.
+    #[serde(default)]
+    pub count: Option<serde_json::Value>,
     pub weight: u32,
 }
 
-fn default_spawn_count() -> u32 {
-    1
+impl SpawnEntryStruct {
+    /// The inclusive group size range.
+    fn count_range(&self) -> (u32, u32) {
+        match &self.count {
+            Some(serde_json::Value::Number(n)) => {
+                let value = n.as_u64().unwrap_or(1) as u32;
+                (value, value)
+            }
+            Some(serde_json::Value::Object(object)) => {
+                let min = object
+                    .get("min_inclusive")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(1) as u32;
+                let max = object
+                    .get("max_inclusive")
+                    .and_then(serde_json::Value::as_u64)
+                    .map_or(min, |max| max as u32);
+                (min, max)
+            }
+            _ => (1, 1),
+        }
+    }
 }
 
 /// Deserialized structure entry specifying its valid biomes and generation step.
@@ -411,11 +430,11 @@ impl ToTokens for StructureStruct {
                     .iter()
                     .map(|entry| {
                         let et = &entry.entity_type;
-                        let min = entry.min_count;
-                        let max = entry.max_count;
-                        let weight = entry.weight;
-                        quote!(SpawnEntry {
-                            entity_type: #et,
+                        let (min, max) = entry.count_range();
+                        let (min, max) = (min as i32, max as i32);
+                        let weight = entry.weight as i32;
+                        quote!(crate::biome::Spawner {
+                            r#type: #et,
                             min_count: #min,
                             max_count: #max,
                             weight: #weight,
@@ -994,19 +1013,13 @@ pub fn build() -> TokenStream {
             Full,
         }
 
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub struct SpawnEntry {
-            pub entity_type: &'static str,
-            pub min_count: u32,
-            pub max_count: u32,
-            pub weight: u32,
-        }
-
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        /// Vanilla `StructureSpawnOverride`: the mobs that spawn in the structure instead of
+        /// the biome's, for one mob category.
+        #[derive(Clone, Copy, Debug)]
         pub struct SpawnOverride {
             pub category: &'static str,
             pub bounding_box: BoundingBoxType,
-            pub spawns: &'static [SpawnEntry],
+            pub spawns: &'static [crate::biome::Spawner],
         }
 
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]

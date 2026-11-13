@@ -16,11 +16,12 @@ use pumpkin_util::{
 
 use crate::{
     ProtoChunk,
+    chunk::structures::block_box_to_nbt,
     generation::structure::{
         piece::StructurePieceType,
         structures::{
             StructureGenerator, StructureGeneratorContext, StructurePiece, StructurePieceBase,
-            StructurePiecesCollector, StructurePosition, WorldPortalExt,
+            StructurePiecesCollector, StructurePosition, WorldPortalExt, get_2d_data_value,
         },
     },
 };
@@ -571,6 +572,18 @@ impl MineShaftRoom {
 }
 
 impl StructurePieceBase for MineShaftRoom {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        tag.put_int("MST", self.shaft_type as i32);
+        let entrances = self
+            .child_entrance_boxes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(block_box_to_nbt)
+            .collect();
+        tag.put_list("Entrances", entrances);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -1298,6 +1311,14 @@ impl MineShaftCorridor {
 }
 
 impl StructurePieceBase for MineShaftCorridor {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        tag.put_int("MST", self.shaft_type as i32);
+        tag.put_bool("hr", self.has_rails);
+        tag.put_bool("sc", self.spider_corridor);
+        tag.put_bool("hps", self.has_placed_spider);
+        tag.put_int("Num", self.num_sections);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -1733,6 +1754,14 @@ impl MineShaftCrossing {
 }
 
 impl StructurePieceBase for MineShaftCrossing {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        tag.put_int("MST", self.shaft_type as i32);
+        tag.put_bool("tf", self.is_two_floored);
+        if let Some(direction) = self.direction {
+            tag.put_int("D", get_2d_data_value(direction));
+        }
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -1970,6 +1999,10 @@ impl MineShaftStairs {
 }
 
 impl StructurePieceBase for MineShaftStairs {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        tag.put_int("MST", self.shaft_type as i32);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

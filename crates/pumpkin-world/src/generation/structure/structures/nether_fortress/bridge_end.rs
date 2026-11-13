@@ -5,6 +5,8 @@ use pumpkin_util::{
     random::{RandomGenerator, RandomImpl},
 };
 
+use pumpkin_nbt::compound::NbtCompound;
+
 use crate::{
     ProtoChunk,
     generation::structure::{
@@ -54,6 +56,10 @@ impl BridgeEndPiece {
 }
 
 impl StructurePieceBase for BridgeEndPiece {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        tag.put_int("Seed", self.seed as i32);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

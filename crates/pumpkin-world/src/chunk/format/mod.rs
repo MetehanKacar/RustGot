@@ -29,6 +29,7 @@ use pumpkin_util::math::vector2::Vector2;
 use super::{
     ChunkData, ChunkHeightmaps, ChunkLight, ChunkParsingError, ChunkSections,
     palette::{BiomePalette, BlockPalette},
+    structures::ChunkStructures,
 };
 pub mod anvil;
 pub mod linear;
@@ -236,7 +237,7 @@ impl ChunkData {
         }
         .map_err(|e| ChunkParsingError::ErrorDeserializingChunk(e.to_string()))?;
 
-        let root_tag = nbt.root_tag;
+        let mut root_tag = nbt.root_tag;
 
         let x_pos = root_tag.get_int("xPos").ok_or_else(|| {
             ChunkParsingError::ErrorDeserializingChunk("Missing xPos".to_string())
@@ -472,6 +473,13 @@ impl ChunkData {
             .cloned()
             .unwrap_or_default();
 
+        let structures = std::sync::OnceLock::new();
+        if let Some(pumpkin_nbt::tag::NbtTag::Compound(tag)) =
+            root_tag.child_tags.remove("structures")
+        {
+            let _ = structures.set(ChunkStructures::from_nbt(tag, position));
+        }
+
         Ok(Self {
             section,
             heightmap: std::sync::Mutex::new(heightmaps),
@@ -488,6 +496,7 @@ impl ChunkData {
             blending_data: None,
             inhabited_time: AtomicU64::new(root_tag.get_long("InhabitedTime").unwrap_or(0) as u64),
             custom_data: std::sync::Mutex::new(custom_data),
+            structures,
         })
     }
 
@@ -697,6 +706,10 @@ impl ChunkData {
             root_compound.put_compound("PumpkinCustomData", custom_data.clone());
         }
 
+        if let Some(structures) = self.structures.get() {
+            root_compound.put_compound("structures", structures.to_nbt());
+        }
+
         let nbt = pumpkin_nbt::Nbt::from(root_compound);
         nbt.write()
     }
@@ -750,6 +763,7 @@ impl ChunkData {
             .as_deref()
             .filter(|a| a.len() == ChunkHeightmaps::LONGS);
         let has_custom = !custom_data.is_empty();
+        let structures = self.structures.get();
 
         let mut flags = u8::from(is_light_correct);
         if ws.is_some() {
@@ -763,6 +777,9 @@ impl ChunkData {
         }
         if has_custom {
             flags |= 1 << 4;
+        }
+        if structures.is_some() {
+            flags |= 1 << 5;
         }
 
         let status_u8 = match self.status {
@@ -859,6 +876,12 @@ impl ChunkData {
 
         if has_custom {
             let bytes = pumpkin_nbt::Nbt::new(String::new(), custom_data.clone()).write_unnamed();
+            out.put_u32(bytes.len() as u32);
+            out.extend_from_slice(&bytes);
+        }
+
+        if let Some(structures) = structures {
+            let bytes = pumpkin_nbt::Nbt::new(String::new(), structures.to_nbt()).write_unnamed();
             out.put_u32(bytes.len() as u32);
             out.extend_from_slice(&bytes);
         }
@@ -1135,6 +1158,28 @@ impl ChunkData {
             NbtCompound::default()
         };
 
+        let structures = std::sync::OnceLock::new();
+        if (flags & (1 << 5)) != 0 {
+            if buf.remaining() < 4 {
+                return Err(ChunkParsingError::ErrorDeserializingChunk(
+                    "Unexpected EOF reading structures length".into(),
+                ));
+            }
+            let len = buf.get_u32() as usize;
+            if buf.remaining() < len {
+                return Err(ChunkParsingError::ErrorDeserializingChunk(
+                    "Unexpected EOF reading structures payload".into(),
+                ));
+            }
+            let mut cursor = std::io::Cursor::new(&buf[..len]);
+            let mut reader = pumpkin_nbt::deserializer::NbtReadHelperJava::new(&mut cursor);
+            let nbt = pumpkin_nbt::Nbt::read_unnamed(&mut reader)
+                .map_err(|e| ChunkParsingError::ErrorDeserializingChunk(e.to_string()))?
+                .root_tag;
+            buf.advance(len);
+            let _ = structures.set(ChunkStructures::from_nbt(nbt, position));
+        }
+
         Ok(Self {
             section,
             heightmap: std::sync::Mutex::new(heightmaps),
@@ -1150,6 +1195,7 @@ impl ChunkData {
             blending_data: None,
             inhabited_time: AtomicU64::new(inhabited_time),
             custom_data: std::sync::Mutex::new(custom_data),
+            structures,
         })
     }
 
@@ -1723,15 +1769,20 @@ mod tests {
 
         let mut cursor = std::io::Cursor::new(&saved[..]);
         let mut reader = pumpkin_nbt::deserializer::NbtReadHelperJava::new(&mut cursor);
-        let root = pumpkin_nbt::Nbt::read(&mut reader).expect("saved chunk is NBT").root_tag;
+        let root = pumpkin_nbt::Nbt::read(&mut reader)
+            .expect("saved chunk is NBT")
+            .root_tag;
         let section = root
             .get_list("sections")
             .and_then(|sections| {
-                sections.iter().filter_map(NbtTag::extract_compound).find(|s| {
-                    s.get_compound("block_states")
-                        .and_then(|b| b.get_list("palette"))
-                        .is_some_and(|p| p.len() == 2)
-                })
+                sections
+                    .iter()
+                    .filter_map(NbtTag::extract_compound)
+                    .find(|s| {
+                        s.get_compound("block_states")
+                            .and_then(|b| b.get_list("palette"))
+                            .is_some_and(|p| p.len() == 2)
+                    })
             })
             .expect("section with both blocks");
         let palette = section

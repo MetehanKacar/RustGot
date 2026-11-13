@@ -8,6 +8,8 @@ use pumpkin_util::{
     random::{RandomGenerator, RandomImpl},
 };
 
+use pumpkin_nbt::compound::NbtCompound;
+
 use crate::{
     ProtoChunk,
     generation::structure::{
@@ -65,6 +67,11 @@ impl SquareRoomPiece {
 }
 
 impl StructurePieceBase for SquareRoomPiece {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        self.piece.add_additional_save_data(tag);
+        tag.put_int("Type", self.room_type as i32);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

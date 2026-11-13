@@ -19,18 +19,16 @@ impl MobEffect for PoisonMobEffect {
     }
 
     fn apply_effect_tick(&self, living: &LivingEntity, _amplifier: u8) {
-        let current_health = living.health.load();
-        if current_health > 1.0
-            && let Some(dyn_self) = living
-                .entity
-                .world
-                .load()
-                .get_entity_by_id(living.entity.entity_id)
+        let world = living.entity.world.load();
+        let mob_effects = &world.purpur().gameplay_mechanics.mob_effects;
+        if living.health.load() > mob_effects.minimal_health_poison_amount
+            && let Some(dyn_self) = world.get_entity_by_id(living.entity.entity_id)
         {
-            let damage_amount = (current_health - 1.0).min(1.0);
-            if damage_amount > 0.0 {
-                dyn_self.damage(&*dyn_self, damage_amount, DamageType::MAGIC);
-            }
+            dyn_self.damage(
+                &*dyn_self,
+                mob_effects.poison_degeneration_amount,
+                DamageType::MAGIC,
+            );
         }
     }
 }

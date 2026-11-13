@@ -5,6 +5,7 @@ use pumpkin_config::BasicConfiguration;
 use pumpkin_data::packet::{CURRENT_MC_VERSION, LOWEST_SUPPORTED_MC_VERSION};
 use pumpkin_protocol::{
     Players, Sample, StatusResponse, Version,
+    codec::var_int::VarInt,
     java::client::{config::CPluginMessage, status::CStatusResponse},
 };
 use pumpkin_util::text::TextComponent;
@@ -42,7 +43,7 @@ pub struct CachedStatus {
 
 pub struct CachedBranding {
     /// Cached server brand buffer so we don't have to rebuild them every time a player joins
-    cached_server_brand: &'static [u8],
+    cached_server_brand: Vec<u8>,
 }
 
 impl Default for CachedBranding {
@@ -53,30 +54,26 @@ impl Default for CachedBranding {
 
 impl CachedBranding {
     const BRAND: &'static str = "RustGot";
-    const BRAND_BYTES: &'static [u8] = &{
-        let brand = Self::BRAND.as_bytes();
-        let len = brand.len();
-        assert!(len < 128, "Brand length must fit in 1-byte VarInt");
-        let mut bytes = [0u8; 1 + Self::BRAND.len()];
-        bytes[0] = len as u8;
-        let mut i = 0;
-        while i < len {
-            bytes[i + 1] = brand[i];
-            i += 1;
-        }
-        bytes
-    };
 
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        let brand = rustgot_purpur::get()
+            .settings
+            .server_mod_name
+            .as_deref()
+            .unwrap_or(Self::BRAND);
+        // The payload is a protocol string: VarInt length, then the UTF-8 bytes.
+        let mut bytes = Vec::with_capacity(VarInt::MAX_SIZE.get() + brand.len());
+        let _ = VarInt(i32::try_from(brand.len()).unwrap_or(i32::MAX)).encode(&mut bytes);
+        bytes.extend_from_slice(brand.as_bytes());
         Self {
-            cached_server_brand: Self::BRAND_BYTES,
+            cached_server_brand: bytes,
         }
     }
 
     #[must_use]
     pub const fn get_branding(&self) -> CPluginMessage<'_> {
-        CPluginMessage::new("minecraft:brand", self.cached_server_brand)
+        CPluginMessage::new("minecraft:brand", self.cached_server_brand.as_slice())
     }
 }
 
@@ -201,12 +198,17 @@ impl CachedStatus {
             None
         };
 
+        let version = if LOWEST_SUPPORTED_MC_VERSION == CURRENT_MC_VERSION {
+            CURRENT_MC_VERSION.to_string()
+        } else {
+            format!("{LOWEST_SUPPORTED_MC_VERSION}-{CURRENT_MC_VERSION}")
+        };
         StatusResponse {
             version: Some(Version {
-                name: if LOWEST_SUPPORTED_MC_VERSION == CURRENT_MC_VERSION {
-                    CURRENT_MC_VERSION.to_string()
-                } else {
-                    format!("{LOWEST_SUPPORTED_MC_VERSION}-{CURRENT_MC_VERSION}")
+                // Like Paper's server list ping: `<server-mod-name> <version>`.
+                name: match &rustgot_purpur::get().settings.server_mod_name {
+                    Some(mod_name) => format!("{mod_name} {version}"),
+                    None => version,
                 },
                 protocol: CURRENT_MC_VERSION.protocol_version() as u32,
             }),

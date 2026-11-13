@@ -13,6 +13,7 @@ pub mod data;
 pub mod dimension;
 pub mod generation;
 pub mod level;
+pub mod level_structures;
 pub mod lighting;
 pub mod poi;
 pub mod test_instance;

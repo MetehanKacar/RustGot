@@ -10,6 +10,8 @@ use pumpkin_util::{
     random::{RandomGenerator, RandomImpl},
 };
 
+use pumpkin_nbt::compound::NbtCompound;
+
 use crate::{
     ProtoChunk,
     generation::structure::{
@@ -93,6 +95,14 @@ impl FiveWayCrossingPiece {
 }
 
 impl StructurePieceBase for FiveWayCrossingPiece {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        self.piece.add_additional_save_data(tag);
+        tag.put_bool("leftLow", self.lower_left_exists);
+        tag.put_bool("leftHigh", self.upper_left_exists);
+        tag.put_bool("rightLow", self.lower_right_exists);
+        tag.put_bool("rightHigh", self.upper_right_exists);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

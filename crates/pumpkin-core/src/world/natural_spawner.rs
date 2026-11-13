@@ -11,6 +11,7 @@ use pumpkin_data::chunk::Biome;
 use pumpkin_data::dimension::Dimension;
 use pumpkin_data::entity::{EntityType, MobCategory, SpawnLocation};
 use pumpkin_data::fluid::Fluid;
+use pumpkin_data::structures::{BoundingBoxType, Structure, StructureKeys};
 use pumpkin_data::tag::Block::MINECRAFT_PREVENT_MOB_SPAWNING_INSIDE;
 use pumpkin_data::tag::Fluid::{MINECRAFT_LAVA, MINECRAFT_WATER};
 use pumpkin_data::tag::Taggable;
@@ -975,6 +976,109 @@ pub fn is_right_distance_to_player_and_spawn_point(
                 .contains_block(pos.0.x, pos.0.z))
 }
 
+/// Vanilla `NetherFortressStructure.FORTRESS_ENEMIES`.
+const FORTRESS_ENEMIES: &[Spawner] = &[
+    Spawner {
+        r#type: "minecraft:blaze",
+        min_count: 2,
+        max_count: 3,
+        weight: 10,
+    },
+    Spawner {
+        r#type: "minecraft:zombified_piglin",
+        min_count: 4,
+        max_count: 4,
+        weight: 5,
+    },
+    Spawner {
+        r#type: "minecraft:wither_skeleton",
+        min_count: 5,
+        max_count: 5,
+        weight: 8,
+    },
+    Spawner {
+        r#type: "minecraft:skeleton",
+        min_count: 5,
+        max_count: 5,
+        weight: 2,
+    },
+    Spawner {
+        r#type: "minecraft:magma_cube",
+        min_count: 4,
+        max_count: 4,
+        weight: 3,
+    },
+];
+
+/// The biome's mobs of `category` (vanilla `MobSpawnSettings.getMobs`), with the category's
+/// serialized name.
+const fn biome_mobs(
+    biome: &'static Biome,
+    category: &'static MobCategory,
+) -> (&'static [Spawner], &'static str) {
+    match category.id {
+        id if id == MobCategory::MONSTER.id => (biome.spawners.monster, "monster"),
+        id if id == MobCategory::CREATURE.id => (biome.spawners.creature, "creature"),
+        id if id == MobCategory::AMBIENT.id => (biome.spawners.ambient, "ambient"),
+        id if id == MobCategory::AXOLOTLS.id => (biome.spawners.axolotls, "axolotls"),
+        id if id == MobCategory::UNDERGROUND_WATER_CREATURE.id => (
+            biome.spawners.underground_water_creature,
+            "underground_water_creature",
+        ),
+        id if id == MobCategory::WATER_CREATURE.id => {
+            (biome.spawners.water_creature, "water_creature")
+        }
+        id if id == MobCategory::WATER_AMBIENT.id => {
+            (biome.spawners.water_ambient, "water_ambient")
+        }
+        _ => (biome.spawners.misc, "misc"),
+    }
+}
+
+/// Vanilla `NaturalSpawner.isInNetherFortressBounds`.
+fn is_in_nether_fortress_bounds(
+    world: &World,
+    category: &'static MobCategory,
+    pos: &BlockPos,
+) -> bool {
+    category == &MobCategory::MONSTER
+        && world.get_block_state(&pos.down()).id.to_block_id() == Block::NETHER_BRICKS.id
+        && world
+            .level
+            .is_inside_structure(pos, StructureKeys::Fortress)
+}
+
+/// Vanilla `NaturalSpawner.mobsAt` and `ChunkGenerator.getMobsAt`: a structure's spawn
+/// override for the category wins over the biome's mobs where its box or piece covers `pos`.
+fn mobs_at(world: &World, category: &'static MobCategory, pos: &BlockPos) -> &'static [Spawner] {
+    if is_in_nether_fortress_bounds(world, category, pos) {
+        return FORTRESS_ENEMIES;
+    }
+    let (biome_spawners, category_name) = biome_mobs(world.level.get_rough_biome(pos), category);
+    let chunk = Vector2::new(get_section_cord(pos.0.x), get_section_cord(pos.0.z));
+    world
+        .level
+        .with_chunk_structures(&chunk, |structures| {
+            structures.references.iter().find_map(|reference| {
+                let spawn_override = Structure::get(&reference.structure)
+                    .spawn_overrides
+                    .iter()
+                    .find(|spawn_override| spawn_override.category == category_name)?;
+                reference
+                    .starts
+                    .iter()
+                    .filter_map(|start| start.shape())
+                    .any(|shape| match spawn_override.bounding_box {
+                        BoundingBoxType::Piece => shape.has_piece_at(pos),
+                        BoundingBoxType::Full => shape.bounding_box().contains_pos(&pos.0),
+                    })
+                    .then_some(spawn_override.spawns)
+            })
+        })
+        .flatten()
+        .unwrap_or(biome_spawners)
+}
+
 #[must_use]
 pub fn can_spawn_mob_at(
     world: &World,
@@ -982,24 +1086,10 @@ pub fn can_spawn_mob_at(
     spawner_type: &'static str,
     pos: &BlockPos,
 ) -> bool {
-    let biome = world.level.get_rough_biome(pos);
-    let spawners = match category.id {
-        id if id == MobCategory::MONSTER.id => biome.spawners.monster,
-        id if id == MobCategory::CREATURE.id => biome.spawners.creature,
-        id if id == MobCategory::AMBIENT.id => biome.spawners.ambient,
-        id if id == MobCategory::AXOLOTLS.id => biome.spawners.axolotls,
-        id if id == MobCategory::UNDERGROUND_WATER_CREATURE.id => {
-            biome.spawners.underground_water_creature
-        }
-        id if id == MobCategory::WATER_CREATURE.id => biome.spawners.water_creature,
-        id if id == MobCategory::WATER_AMBIENT.id => biome.spawners.water_ambient,
-        id if id == MobCategory::MISC.id => biome.spawners.misc,
-        _ => biome.spawners.misc,
-    };
     let target = spawner_type
         .strip_prefix("minecraft:")
         .unwrap_or(spawner_type);
-    spawners.iter().any(|s| {
+    mobs_at(world, category, pos).iter().any(|s| {
         let name = s.r#type.strip_prefix("minecraft:").unwrap_or(s.r#type);
         name == target
     })
@@ -1018,20 +1108,7 @@ pub fn get_random_spawn_mob_at(
     {
         None
     } else {
-        let spawners = match category.id {
-            id if id == MobCategory::MONSTER.id => biome.spawners.monster,
-            id if id == MobCategory::CREATURE.id => biome.spawners.creature,
-            id if id == MobCategory::AMBIENT.id => biome.spawners.ambient,
-            id if id == MobCategory::AXOLOTLS.id => biome.spawners.axolotls,
-            id if id == MobCategory::UNDERGROUND_WATER_CREATURE.id => {
-                biome.spawners.underground_water_creature
-            }
-            id if id == MobCategory::WATER_CREATURE.id => biome.spawners.water_creature,
-            id if id == MobCategory::WATER_AMBIENT.id => biome.spawners.water_ambient,
-            id if id == MobCategory::MISC.id => biome.spawners.misc,
-            _ => biome.spawners.misc,
-        };
-        choose_weighted_spawner(spawners, &mut rng())
+        choose_weighted_spawner(mobs_at(world, category, block_pos), &mut rng())
     }
 }
 

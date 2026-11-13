@@ -14,7 +14,7 @@ use pumpkin_util::random::xoroshiro128::XoroshiroSplitter;
 use pumpkin_util::random::{RandomImpl, get_large_feature_seed, legacy_rand::LegacyRand};
 use pumpkin_util::{
     HeightMap,
-    math::{block_box::BlockBox, position::BlockPos, vector3::Vector3},
+    math::{block_box::BlockBox, position::BlockPos, vector2::Vector2, vector3::Vector3},
     random::{RandomGenerator, get_decorator_seed, worldgen_random::WorldgenRandom},
 };
 use rustc_hash::FxHashMap;
@@ -164,7 +164,11 @@ pub struct ProtoChunk {
     pub flat_motion_blocking_height_map: [i16; CHUNK_AREA],
     pub flat_motion_blocking_no_leaves_height_map: [i16; CHUNK_AREA],
     pub(crate) structure_starts: FxHashMap<StructureKeys, StructureInstance>,
-    pub(crate) structure_references: Vec<(StructureKeys, Arc<Mutex<StructurePiecesCollector>>)>,
+    /// Starts reaching into this chunk, with the chunk each starts in.
+    pub(crate) structure_references:
+        Vec<crate::generation::structure::structures::StructureReference>,
+    /// Structure data read from disk, kept for a chunk whose structure stages do not run again.
+    pub(crate) saved_structures: Option<crate::chunk::structures::ChunkStructures>,
 
     height: u16,
     bottom_y: i8,
@@ -222,7 +226,7 @@ impl ProtoChunk {
     #[cfg(test)]
     pub(crate) fn has_structure(&self, key: StructureKeys) -> bool {
         self.structure_starts.contains_key(&key)
-            || self.structure_references.iter().any(|(k, _)| *k == key)
+            || self.structure_references.iter().any(|(k, _, _)| *k == key)
     }
 
     #[must_use]
@@ -281,6 +285,7 @@ impl ProtoChunk {
             flat_motion_blocking_no_leaves_height_map: default_heightmap,
             structure_starts: FxHashMap::default(),
             structure_references: Vec::new(),
+            saved_structures: None,
             height,
             bottom_y,
             generation_height,
@@ -417,6 +422,7 @@ impl ProtoChunk {
 
         let saved_stage = StagedChunkEnum::from(chunk_data.status);
         proto_chunk.stage = saved_stage;
+        proto_chunk.saved_structures = chunk_data.structures.get().cloned();
         if let super::generator::WorldGenerator::Noise(generator) = generator
             && (StagedChunkEnum::StructureStart..StagedChunkEnum::Features).contains(&saved_stage)
         {
@@ -908,7 +914,7 @@ impl ProtoChunk {
                 };
                 (k, col)
             })
-            .chain(self.structure_references.iter().map(|(k, col)| (k, col)))
+            .chain(self.structure_references.iter().map(|(k, _, col)| (k, col)))
         {
             if seen_collectors
                 .iter()
@@ -1553,7 +1559,7 @@ impl ProtoChunk {
                     }
                 }
 
-                for (id, collector_arc) in &center_chunk.structure_references {
+                for (id, _, collector_arc) in &center_chunk.structure_references {
                     if *id == structure_key && !tasks.iter().any(|t| Arc::ptr_eq(t, collector_arc))
                     {
                         tasks.push(collector_arc.clone());
@@ -1790,7 +1796,7 @@ impl ProtoChunk {
         chunk_min_y: i32,
         chunk_height: u16,
         wanted: impl Fn(StructureKeys) -> bool,
-    ) -> Vec<(StructureKeys, Arc<Mutex<StructurePiecesCollector>>)> {
+    ) -> Vec<crate::generation::structure::structures::StructureReference> {
         let random_config = &generator.random_config;
         let settings = generator.settings;
         let noise_router = &generator.base_router;
@@ -1930,7 +1936,11 @@ impl ProtoChunk {
                                 .get_adjusted_bounding_box(&entry.structure)
                                 .intersects_raw_xz(start_x, start_z, end_x, end_z)
                         {
-                            references.push((entry.structure, start_data.collector.clone()));
+                            references.push((
+                                entry.structure,
+                                Vector2::new(candidate_chunk_x, candidate_chunk_z),
+                                start_data.collector.clone(),
+                            ));
                         }
                         break;
                     }
@@ -1958,11 +1968,11 @@ impl ProtoChunk {
             |_| true,
         );
 
-        for (key, pos) in references {
+        for (key, start_chunk, pos) in references {
             self.structure_starts
                 .entry(key)
                 .or_insert_with(|| StructureInstance::Reference(pos.clone()));
-            self.structure_references.push((key, pos));
+            self.structure_references.push((key, start_chunk, pos));
         }
 
         self.stage = StagedChunkEnum::StructureReferences;

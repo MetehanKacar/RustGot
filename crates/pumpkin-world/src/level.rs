@@ -118,6 +118,8 @@ pub struct Level {
     pub level_channel: Arc<LevelChannel>,
     pub thread_tracker: Mutex<Vec<thread::JoinHandle<()>>>,
     pub chunk_listener: Arc<ChunkListener>,
+    /// Shapes of structure starts that loaded chunks reference, shared between those chunks.
+    pub(crate) structure_start_shapes: crate::level_structures::StructureStartShapes,
 }
 
 pub struct TickData {
@@ -325,6 +327,7 @@ impl Level {
             level_channel: level_channel.clone(),
             thread_tracker,
             chunk_listener: listener.clone(),
+            structure_start_shapes: crate::level_structures::StructureStartShapes::default(),
         });
 
         GenerationSchedule::create(
@@ -699,6 +702,30 @@ impl Level {
                 .push(LoadedChunkChange::Loaded(pos));
         }
         f(&chunk)
+    }
+
+    /// Returns whether the chunk at `pos` is currently loaded in memory or exists on disk.
+    pub async fn is_chunk_generated(&self, pos: Vector2<i32>) -> bool {
+        if self.is_chunk_loaded(&pos) {
+            return true;
+        }
+        self.chunk_saver
+            .is_chunk_generated(&self.level_folder, pos)
+            .await
+    }
+
+    /// Deletes an unloaded chunk (and its entity chunk) from disk storage.
+    /// Returns `false` if the chunk is currently loaded or did not exist on disk.
+    pub async fn delete_chunk(&self, pos: Vector2<i32>) -> bool {
+        if self.is_chunk_loaded(&pos) {
+            return false;
+        }
+        let chunk_deleted = self.chunk_saver.delete_chunk(&self.level_folder, pos).await;
+        let entity_deleted = self
+            .entity_saver
+            .delete_chunk(&self.level_folder, pos)
+            .await;
+        chunk_deleted || entity_deleted
     }
 
     pub fn loaded_chunk_changes(&self) -> impl Iterator<Item = LoadedChunkChange> + '_ {

@@ -88,7 +88,7 @@ pub fn generate_single_chunk_with_radius(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::chunk::ChunkHeightmapType;
     use crate::chunk_system::Chunk;
     use crate::chunk_system::{
@@ -101,7 +101,7 @@ mod tests {
     use pumpkin_util::world_seed::Seed;
     use std::sync::Arc;
 
-    struct BlockRegistry;
+    pub struct BlockRegistry;
     impl WorldPortalExt for BlockRegistry {
         fn can_place_at(
             &self,

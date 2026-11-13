@@ -493,9 +493,14 @@ pub fn test_noise_threshold(
             .push((condition.noise.id, sampler));
         context.noise_threshold_samplers.len() - 1
     });
+    let y = if condition.is_3d {
+        f64::from(context.block_pos_y)
+    } else {
+        0.0
+    };
     let value = f64::from(context.noise_threshold_samplers[index].1.sample(
         context.block_pos_x as f64,
-        0.0,
+        y,
         context.block_pos_z as f64,
     ));
     value >= condition.min_threshold && value <= condition.max_threshold

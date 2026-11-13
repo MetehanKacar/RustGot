@@ -16,7 +16,8 @@ use crate::{
         piece::StructurePieceType,
         structures::{
             StructureGenerator, StructureGeneratorContext, StructurePiece, StructurePieceBase,
-            StructurePiecesCollector, StructurePosition,
+            StructurePiecesCollector, StructurePosition, add_template_save_data,
+            mirror_legacy_name, rotation_legacy_name,
         },
         template::{
             BlockStateResolver, PaletteEntry, StructureTemplate, get_block_entity_id, get_template,
@@ -224,6 +225,7 @@ const fn relative(position: Vector3<i32>, direction: Direction, distance: i32) -
 struct MansionTemplatePiece {
     piece: StructurePiece,
     template: Arc<StructureTemplate>,
+    template_name: String,
     template_position: Vector3<i32>,
     rotation: Rotation,
     mirror: TemplateMirror,
@@ -254,6 +256,7 @@ impl MansionTemplatePiece {
         Some(Self {
             piece: StructurePiece::new(StructurePieceType::WoodlandMansion, bounding_box, 0),
             template,
+            template_name: descriptor.template.clone(),
             template_position: descriptor.position,
             rotation: descriptor.rotation,
             mirror: descriptor.mirror,
@@ -424,6 +427,21 @@ impl MansionTemplatePiece {
 }
 
 impl StructurePieceBase for MansionTemplatePiece {
+    fn orientation(&self) -> Option<pumpkin_util::BlockDirection> {
+        // Vanilla `TemplateStructurePiece` always faces north.
+        Some(pumpkin_util::BlockDirection::North)
+    }
+
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        // `WoodlandMansionPiece.makeTemplateLocation` adds the `woodland_mansion/` folder back.
+        add_template_save_data(tag, &self.template_name, self.template_position);
+        tag.put_string("Rot", rotation_legacy_name(self.rotation).to_string());
+        tag.put_string(
+            "Mi",
+            mirror_legacy_name(self.mirror.state_mirror()).to_string(),
+        );
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -467,6 +485,11 @@ impl MansionFoundationPiece {
 }
 
 impl StructurePieceBase for MansionFoundationPiece {
+    fn is_start_piece(&self) -> bool {
+        // Vanilla fills the foundation in `WoodlandMansionStructure.afterPlace`.
+        false
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

@@ -19,9 +19,10 @@ use crate::{
         positions::chunk_pos::{start_block_x, start_block_z},
         structure::{
             piece::StructurePieceType,
+            shiftable_piece::DEFAULT_H_POS,
             structures::{
                 StructureGenerator, StructureGeneratorContext, StructurePiece, StructurePieceBase,
-                StructurePiecesCollector, StructurePosition,
+                StructurePiecesCollector, StructurePosition, add_scattered_feature_save_data,
             },
         },
     },
@@ -54,6 +55,7 @@ impl StructureGenerator for DesertPyramidGenerator {
         collector.add_piece(Box::new(DesertPyramidPiece {
             piece,
             height_adjusted: false,
+            height_position: DEFAULT_H_POS,
             has_placed_chest: [false; 4],
         }));
 
@@ -67,6 +69,8 @@ impl StructureGenerator for DesertPyramidGenerator {
 pub struct DesertPyramidPiece {
     piece: StructurePiece,
     height_adjusted: bool,
+    /// Vanilla `ScatteredFeaturePiece.heightPosition`.
+    height_position: i32,
     has_placed_chest: [bool; 4],
 }
 
@@ -100,6 +104,7 @@ impl DesertPyramidPiece {
         let shift_y = lowest - self.piece.bounding_box.min.y + ground_offset;
         self.piece.bounding_box.move_pos(0, shift_y, 0);
         self.height_adjusted = true;
+        self.height_position = lowest;
         true
     }
 
@@ -519,6 +524,18 @@ impl DesertPyramidPiece {
 }
 
 impl StructurePieceBase for DesertPyramidPiece {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        add_scattered_feature_save_data(
+            tag,
+            &self.piece.bounding_box,
+            self.piece.facing,
+            self.height_position,
+        );
+        for (index, placed) in self.has_placed_chest.iter().enumerate() {
+            tag.put_bool(&format!("hasPlacedChest{index}"), *placed);
+        }
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

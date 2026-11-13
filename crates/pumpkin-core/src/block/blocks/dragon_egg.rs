@@ -22,6 +22,9 @@ impl DragonEggBlock {
     const TELEPORT_RADIUS_Y: i32 = 8;
 
     fn teleport(world: &Arc<World>, pos: &BlockPos) {
+        if !world.purpur().blocks.dragon_egg_teleport {
+            return;
+        }
         for _ in 0..1000 {
             let test_pos = pos.add(
                 rng().random_range(0..Self::TELEPORT_RADIUS_XZ)
