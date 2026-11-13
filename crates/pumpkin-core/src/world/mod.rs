@@ -2881,6 +2881,12 @@ impl World {
         Some(rod.up())
     }
 
+    /// This world's `purpur.yml` settings (Purpur's `level.purpurConfig`).
+    #[must_use]
+    pub fn purpur(&self) -> &'static rustgot_purpur::WorldSettings {
+        rustgot_purpur::world(self.dimension.minecraft_name)
+    }
+
     pub fn get_world_age(&self) -> i64 {
         self.level_time
             .lock()

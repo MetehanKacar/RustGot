@@ -1,0 +1,18 @@
+[package]
+name = "rustgot-purpur"
+description = "Reads Purpur's purpur.yml and exposes the settings RustGot applies."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pumpkin-util.workspace = true
+serde_norway = "0.9.42"
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

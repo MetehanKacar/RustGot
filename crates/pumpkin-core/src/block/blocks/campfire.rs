@@ -173,7 +173,7 @@ impl BlockBehaviour for CampfireBlock {
         let mut props = CampfireLikeProperties::from_state_id(args.block.default_state.id);
         props.waterlogged = is_replacing_water;
         props.signal_fire = is_signal_fire_base_block(args.world.get_block(&args.position.down()));
-        props.lit = !is_replacing_water;
+        props.lit = args.world.purpur().blocks.campfire_lit_when_placed && !is_replacing_water;
         props.facing = args.player.get_entity().get_horizontal_facing();
         props.to_state_id(args.block)
     }

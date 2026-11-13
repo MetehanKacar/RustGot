@@ -2991,6 +2991,7 @@ dependencies = [
  "rayon",
  "rustgot-config",
  "rustgot-jvm",
+ "rustgot-purpur",
  "rustls",
  "tokio",
  "tracing",
@@ -3121,6 +3122,7 @@ dependencies = [
  "reqwest",
  "rsa",
  "rustc-hash",
+ "rustgot-purpur",
  "rustls",
  "rustyline",
  "serde",
@@ -4110,6 +4112,16 @@ dependencies = [
  "pumpkin-util",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "rustgot-purpur"
+version = "0.2.2+26.3-26.60"
+dependencies = [
+ "pumpkin-util",
+ "serde_norway",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]
