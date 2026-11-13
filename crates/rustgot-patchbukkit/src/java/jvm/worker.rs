@@ -449,7 +449,11 @@ impl JvmWorker {
             .option("--add-opens=java.base/java.lang.reflect=ALL-UNNAMED")
             .option("--add-opens=java.base/jdk.internal.vm=ALL-UNNAMED")
             .option("--add-opens=java.management/sun.management=ALL-UNNAMED")
-            .option("-Dcom.google.protobuf.useUnsafe=false");
+            .option("-Dcom.google.protobuf.useUnsafe=false")
+            // RustGot owns the console. Without this, Paper's log4j console appender probes the
+            // terminal through JLine, which on Windows spawns a child process that never exits.
+            .option("-Dterminal.jline=false")
+            .option("-Dterminal.ansi=false");
 
         builder = builder.option(format!("-javaagent:{}", patchbukkit_jar.to_string_lossy()));
 
