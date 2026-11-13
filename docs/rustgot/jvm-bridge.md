@@ -1,8 +1,10 @@
 # Java plugin bridge (embedded JVM)
 
 RustGot runs Paper/Spigot/Bukkit plugins (`plugins/*.jar`) in a JVM embedded into the server
-process through JNI. Code lives in `crates/rustgot-jvm`; settings are the `jvm:` section of
-`rustgot.yml` (`crates/rustgot-config`).
+process through JNI. Java discovery, download and the base JVM options live in
+`crates/rustgot-jvm`; the Paper API comes from PatchBukkit, vendored as
+`crates/rustgot-patchbukkit` (Phase 4). Settings are the `jvm:` section of `rustgot.yml`
+(`crates/rustgot-config`) plus `patchbukkit/patchbukkit.config.toml` for bridge details.
 
 ## Phase 3 (done): lazy JVM foundation
 
@@ -121,45 +123,133 @@ Findings that matter for RustGot:
    "NMS/CraftBukkit plugins unsupported"; with PatchBukkit they are "best effort, unsupported".
 4. It downloads Mojang/Paper code at runtime only (Paperclip), which keeps redistribution clean.
 
-## Phase 4 plan: Paper API through PatchBukkit
+## Phase 4: Paper API through PatchBukkit
 
-1. **Vendor PatchBukkit's Rust side as `crates/rustgot-patchbukkit`** (GPL-3.0, keep its history
-   or a pinned upstream commit; `git subtree` makes re-syncing practical). Replace its own JVM
-   worker start (`JavaVM::new` + `java-locator`) with `rustgot-jvm` (discovery, GraalVM download,
-   `-Xrs`, heap policy, lazy start). Keep plugins in `plugins/`.
-2. **Register it in-process** instead of through `NativePluginLoader`: give `PluginManager` a way
-   to add a built-in `Arc<dyn Plugin>` (small upstreamable change), so PatchBukkit's
-   `on_load`/`on_unload` run at Pumpkin's plugin points. Disable Java plugins **before** players
-   are kicked and worlds saved (Paper disables plugins first in `stopServer`); today's Phase 3
-   hook runs after `PumpkinServer::start` returns, which is too late once plugins touch players.
-3. **Ship `patchbukkit.jar`** without a build-time JDK: build it in RustGot CI (Gradle +
-   paperweight) and either place it next to the binary in release archives or download it on first
-   Java-plugin start from our GitHub release with a SHA-256 pinned in the source, like GraalVM.
-4. **API drift**: compile PatchBukkit against our `pumpkin-core`, fix call sites, and keep a CI
-   job that builds it so upstream merges that break the bridge are noticed.
-5. **Threading review** before enabling by default: sync Bukkit events currently run on whichever
-   thread fires them under a global lock, including Rayon workers in the tick; measure MSPT impact
-   with plugins listening to hot events (move, block physics).
-6. **Measure memory**: RSS of RustGot with 0, 1 and 6 plugins, Paper headless vs. Purpur.
-7. **Plugin matrix**, one stage per row, each with a scripted bot/console check plus an in-game
-   check:
+### How it is wired
 
-   | Plugin | What to verify | Main bridge surface |
-   |---|---|---|
-   | LuckPerms | `/lp user … permission set`, permission checks seen by other plugins, storage (H2/SQLite) survives restart | permissions, commands, services, async tasks |
-   | Vault (VaultUnlocked) | economy/permission/chat providers registered and found | `ServicesManager` |
-   | EssentialsX | `/spawn`, `/home`, `/tpa`, `/msg`, `/balance`, `/eco`, kits, AFK, join/quit messages | teleports, inventories, chat, player data, scheduler |
-   | PlaceholderAPI | `/papi parse me %player_name%`, expansions download | chat, plugin messaging, HTTP |
-   | WorldEdit (then FAWE) | `//wand`, `//set`, `//undo`, schematic load/save; FAWE adds async chunk access | bulk block get/set, chunk access, NBT, selections |
-   | Multiverse-Core | create/load/teleport between worlds | world creation/loading through Pumpkin, per-world settings |
+- `crates/rustgot-patchbukkit` is PatchBukkit `d6b55cf` (0.2.2): `src`, `build`, `proto` and the
+  Java/Gradle sources in `java/`, with its GPL-3.0 `LICENSE`; the crate `README.md` lists every
+  RustGot change. It compiled against our `pumpkin-core` without API fixes.
+- `main.rs` registers it with `PluginManager::load_builtin_plugin` (new, small, upstreamable)
+  when `plugins/` has jars and `jvm.enabled` is true. `on_load` returns at once; Java, the jar and
+  Paper are prepared on the bridge's own runtime, then the JVM boots headless Paper on the
+  `RustGot-JVM` thread (16 MiB stack). Players that join earlier get the Bukkit commands when
+  the boot finishes (`reload_commands_for_everyone`).
+- Java comes from `rustgot_jvm::find_or_install_java` and the JVM is created with
+  `JavaVM::with_libjvm` plus `rustgot_jvm::embedding_options` (`-Xrs`, heap from
+  `jvm.max-heap-mb`/plugin count, compact headers). `-Dterminal.jline=false` is required: without
+  it Paper's log4j console appender probes the terminal through JLine, which on Windows spawns a
+  child process that never returns and hangs the boot.
+- Shutdown: `PumpkinServer::shutdown` now unloads plugins first (like Paper's `stopServer`),
+  then saves and kicks players and saves worlds. The headless server is marked `hasStopped`
+  before `disablePlugins`, so `Bukkit.isStopping()` is true (EssentialsX otherwise logs a
+  "/reload" error).
+- Scheduler: besides `CraftScheduler.mainThreadHeartbeat`, the heartbeat now also ticks Paper's
+  global region scheduler, the entity schedulers and the Adventure/dialog click queues, like
+  `MinecraftServer.tickChildren`. Plugins using Paper/Folia schedulers (PlaceholderAPI's eCloud,
+  FoliaLib users) never ran those tasks before.
+- Files: plugins in `plugins/` (Paper also puts their data folders there), bridge config and an
+  optional operator-provided `patchbukkit.jar` in `patchbukkit/`, Paper runtime dir in
+  `patchbukkit/paper-runtime/`, downloads in `cache/patchbukkit/`.
 
-   FAWE and Multiverse need new Rust APIs (async bulk chunk edits, creating worlds at runtime);
-   schedule them last.
+### Shipping `patchbukkit.jar`
+
+No binaries are committed and the jar is not embedded. `src/java/bridge_jar.rs` looks for
+`patchbukkit/patchbukkit.jar`, then `patchbukkit.jar` next to the executable, then downloads
+`https://github.com/MetehanKacar/RustGot/releases/download/patchbukkit-0.2.2-rg1/patchbukkit.jar`
+and checks the SHA-256 pinned in `RELEASE_SHA256`. **That release does not exist yet**: a
+maintainer has to build the jar and upload it under that tag. `java/build-jar.{sh,ps1}` downloads
+Gradle 9.8.1 (SHA-256 checked), builds `:patchbukkit:jar` and fails if the hash differs from the
+pin (`PATCHBUKKIT_SKIP_PIN=1` / `-SkipPin` to accept a new one when the Java side changes). The
+`jar` task is reproducible: two clean builds on this machine (Oracle GraalVM 25.0.4) gave the same
+hash; other JDK builds or the moving `paperweight-userdev 2.0.0-SNAPSHOT` may not, which shows up
+as a pin mismatch. Building needs a JDK 25 and network (Maven Central, repo.papermc.io).
+
+Paperclip (Paper 26.3 build 205) is downloaded from `fill.papermc.io`; its SHA-256
+`a0a58f53…9968` is pinned in `src/java/paper.rs` and must also match what the API reports. A
+different configured build falls back to the API's checksum with a warning. Paperclip runs with
+the Java `rustgot-jvm` found, so `JAVA_HOME` is not needed.
+
+### Plugin matrix (Windows 11, `--profile iter`, seed `1792752931139676432`, console + loadbot)
+
+Jars from Modrinth, SHA-512 checked against the Modrinth API:
+LuckPerms-Bukkit 5.5.71, VaultUnlocked 2.20.3, EssentialsX 2.22.0, PlaceholderAPI 2.12.3,
+worldedit-bukkit 7.4.6. Each stage booted with only that plugin and its dependencies. `loadbot`
+bots cannot type commands, so commands ran from the console with bots online.
+
+| Plugin | Status | What was checked |
+|---|---|---|
+| LuckPerms | works | boot, `lp info`, `lp creategroup`, `lp group … permission set/info`, `lp listgroups`; H2 data survived a restart; `lp user bot0 parent add vip` + `permission check essentials.fly` = true for an online bot, with Essentials contexts |
+| VaultUnlocked | works | `vault-info` lists LuckPerms as permission and chat provider; EssentialsX finds the Vault economy layer |
+| EssentialsX | works (console-checked) | `essentials version`, `balance`/`eco give` (0 → 100), `msg`, `whois` (position, money, IP), `seen`, `list`, join messages; clean disable on stop. Logs "unsupported server version". Teleports, homes, kits, AFK and chat formatting need a real client |
+| PlaceholderAPI | works (after the scheduler fix) | `papi version`, `ecloud download Player/Server`, `papi reload`, `papi list`, `papi parse bot0 %player_name%_%player_x%` = `bot0_2056`, `%server_online%` = 2 |
+| WorldEdit | partially | loads and enables (all capabilities on Bukkit-Official), `we version`; `//size`, `//undo`, `//redo` reach WorldEdit. Edits could not be checked from the console: `/world`, `/pos1`, `/set`, `/count` printed nothing, and `//cmd args` typed on the console is rejected by Pumpkin's parser. Command names that start with `/` are registered without it and the executor sends the cleaned name, so WorldEdit's `//pos1` may arrive as `pos1`; needs a look at `native_callbacks/command.rs` / `commands/mod.rs` and an in-game check |
+
+Not attempted: FAWE (needs async bulk chunk access from Java) and Multiverse-Core (needs creating
+and loading worlds at runtime through Pumpkin); both need new Rust APIs.
+
+### Memory and tick time
+
+Working set (WS) / private bytes in MiB from `Get-Process`, 1 s samples; "idle" is 10-30 s
+after "PatchBukkit background initialization complete" (Purpur: after "Done"); "3 bots" is
+`rustgot-loadbot` with 3 bots flying 45 s at 0.5 blocks/tick over mostly generated terrain.
+Purpur 26.3-2657 ran with `-Xmx2G` and default JVM ergonomics; RustGot's JVM got
+`-Xmx576m` (256 + 64 × 5 plugins).
+
+| Setup | idle WS | idle private | 3 bots WS mean (peak) |
+|---|---|---|---|
+| RustGot, no jars (no JVM) | 33 | 15 | 544 (575) |
+| RustGot + LuckPerms | 716 | 738 | - |
+| RustGot + LP, Vault, EssentialsX | 877-883 | 918-924 | 1260-1422 (1505) |
+| RustGot + all 5 plugins | 881 | 973 | 1441 (1482) |
+| same, `-XX:+UseSerialGC -XX:-UseJVMCICompiler -XX:ReservedCodeCacheSize=64m -XX:TieredStopAtLevel=1` | 741 | 884 | 1278 (1310) |
+| Purpur, no plugins | 827 | 879 | 1454 (1768) |
+| Purpur + all 5 plugins | 1199 | 1247 | 2108 (2281) |
+
+Honest reading: headless Paper costs about 700-850 MiB before any player, so RustGot with Java
+plugins idles at the level of Purpur without plugins, and with the same 5 plugins it is only
+about 25-35 % below Purpur (881 vs 1199 MiB idle, 1441 vs 2108 MiB with bots). The low-RAM goal
+holds only without Java plugins. NMT after boot with 5 plugins: heap 480 MiB committed (274 MiB
+live after a full GC), metaspace 146, code cache 63, GC structures 69, classes 43, symbols 36.
+The largest live objects are block-state collision shapes (`AABB`, `ArrayVoxelShape`, Moonrise
+`CachedShapeData`, about 80 MiB) built by Paper's block bootstrap for a server that never ticks.
+
+Mitigations, in order of payoff:
+
+1. Smaller JVM defaults for the bridge: SerialGC and C1 instead of the Graal JIT saved 140 MiB
+   idle and 160 MiB with bots above; a heap cap closer to the live set (for example 384 MiB for
+   5 plugins) and `-XX:MaxMetaspaceSize` need testing with more plugins first.
+2. Skip headless Paper work nobody uses: block-shape caches, recipe/advancement loading (1866
+   advancements are loaded), datapack registries beyond what plugins read, Paper's own Netty and
+   Moonrise worker pools.
+3. Class-data sharing (an AppCDS archive of the Paper classpath) to share metaspace and cut the
+   10-30 s boot.
+
+Tick time (`tick query`, last 100 ticks, 3 bots): without jars P50 9.4-12.2 ms, P95 12.6-17.6,
+P99 15.5-25.6. With all 5 plugins P50 8.7-10.5 ms but P95 20-41 ms and P99 30-65 ms (one window
+with LP/Vault/EssentialsX had P99 576 ms). Purpur with the same plugins reported 21-43 ms averages
+over 5 s windows. The median is unchanged; the tail comes from sync Bukkit events (EssentialsX
+listens to `PlayerMoveEvent`) taking the global primary lock on tick and Rayon threads, from Java
+GC pauses, and from the bridge contending with the tick. The Paper boot holds the primary lock for
+its whole duration, so the first ticks after it were 5.4 s late ("Can't keep up"). Not measured
+separately: the cost per hot event; a microbenchmark of `fire_event_direct` for `PlayerMoveEvent`
+is the next step.
+
+### Not done / next steps
+
+- Publish `patchbukkit.jar` under the pinned release tag (or ship it next to the binary) and add a
+  CI job that builds the jar and the crate.
+- Fix command names starting with `/` (WorldEdit) and check WorldEdit in game.
+- Hot events: skip move events no listener needs; move the Paper boot off the primary lock.
+- `rustgot_jvm::JavaPluginHost` (the Phase 3 proof-of-life bridge) is no longer used by the
+  binary; remove it once PatchBukkit is the accepted path.
 
 ## Known limits and risks
 
 - Plugins that call `System.exit` end the RustGot process without saving worlds (Paper saves in
-  its shutdown hook). Needs an `exit` hook or a `Runtime` patch in Phase 4.
+  its shutdown hook). Still open with PatchBukkit.
+- PatchBukkit stops its JVM worker but does not destroy the JVM; Java shutdown hooks only run
+  when the process exits.
 - `System.out`/`System.err` of Java code go straight to the console, not through `tracing`.
 - On Linux the JVM and Wasmtime both install SIGSEGV/SIGBUS handlers and chain to the previous
   one; this was only tested on Windows.
