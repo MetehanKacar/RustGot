@@ -20,6 +20,10 @@ impl ChunkLoading {
     // pub const FULL_CHUNK_LEVEL: i8 = 33;
     pub const FULL_CHUNK_LEVEL: i8 = 43;
     pub const MAX_LEVEL: i8 = 49; // level 49 will be unloaded.
+    /// Vanilla `ChunkMap.FORCED_TICKET_LEVEL` (`ChunkLevel.byStatus(ENTITY_TICKING)`).
+    pub const FORCED_TICKET_LEVEL: i8 = Self::FULL_CHUNK_LEVEL - 2;
+    /// `FORCED_TICKET_LEVEL` on vanilla's scale, where `ChunkLevel.FULL_CHUNK_LEVEL` is 33.
+    pub const VANILLA_FORCED_TICKET_LEVEL: i32 = 31;
     fn debug_check_error(&self) -> bool {
         let mut temp = ChunkLevel::default();
         for (ticket_pos, levels) in &self.ticket {
