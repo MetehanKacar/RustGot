@@ -203,11 +203,26 @@ fn handle_pumpkin(
         );
 
         let drop_pos = location.to_centered_f64();
-        let item_entity = Arc::new(ItemEntity::new(
-            Entity::new(world.clone(), drop_pos, &EntityType::ITEM),
-            ItemStack::new(4, &Item::PUMPKIN_SEEDS),
-        ));
-        world.spawn_entity(item_entity);
+        let drops = world.get_loot_table("minecraft:carve/pumpkin").map_or_else(
+            || vec![ItemStack::new(4, &Item::PUMPKIN_SEEDS)],
+            |handle| {
+                let params = crate::world::loot::LootContextParameters {
+                    world: Some(&world),
+                    position: Some(drop_pos),
+                    this_entity: Some(player as &dyn crate::entity::EntityBase),
+                    tool: Some(item.clone()),
+                    ..Default::default()
+                };
+                crate::world::loot::generate_loot_from_handle(&handle, rand::random(), &params)
+            },
+        );
+        for drop_stack in drops {
+            let item_entity = Arc::new(ItemEntity::new(
+                Entity::new(world.clone(), drop_pos, &EntityType::ITEM),
+                drop_stack,
+            ));
+            world.spawn_entity(item_entity);
+        }
         if player.gamemode.load() != pumpkin_util::GameMode::Creative {
             let _ = item.damage_item(1);
         }
