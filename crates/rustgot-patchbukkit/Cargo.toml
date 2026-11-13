@@ -1,0 +1,52 @@
+[package]
+name = "rustgot-patchbukkit"
+description = "Paper/Bukkit plugin bridge for RustGot, vendored from PatchBukkit (https://github.com/Pumpkin-MC/PatchBukkit)."
+authors = ["PumpkinMC Contributors", "RustGot Contributors"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "GPL-3.0-only"
+build = "build/main.rs"
+
+[dependencies]
+pumpkin = { path = "../pumpkin-core", package = "pumpkin-core", default-features = false }
+pumpkin-data.workspace = true
+pumpkin-protocol.workspace = true
+pumpkin-util.workspace = true
+pumpkin-nbt.workspace = true
+pumpkin-config.workspace = true
+rustgot-config.workspace = true
+rustgot-jvm.workspace = true
+
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "fs", "macros", "process", "io-util"] }
+tracing.workspace = true
+jni = { version = "0.22.4", default-features = false, features = ["invocation"] }
+walkdir = "2"
+anyhow = "1.0"
+uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+prost = "0.14"
+prost-types = "0.14"
+bytes.workspace = true
+time.workspace = true
+toml.workspace = true
+reqwest.workspace = true
+sha2.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[build-dependencies]
+prost-build = "0.14"
+protoc-bin-vendored = "3"
+glob = "0.3.4"
+
+# Vendored code keeps upstream PatchBukkit's lint level instead of the workspace's stricter one.
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+multiple_crate_versions = "allow"
+unnecessary_fallible_conversions = "allow"
+not_unsafe_ptr_arg_deref = "allow"

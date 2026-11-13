@@ -37,7 +37,6 @@ use pumpkin_util::text::{
 };
 use pumpkin_wasm_host::WasmPluginLoader;
 use rustgot_config::RustGotConfig;
-use rustgot_jvm::JavaPluginHost;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
@@ -195,14 +194,19 @@ async fn main() {
 
     // The JVM only starts when there are Java plugins, so servers without them pay nothing.
     let java_plugins = rustgot_config::java_plugin_jars(&exec_dir.join("plugins"));
-    let java_plugin_host = if java_plugins.is_empty() {
-        None
-    } else if rustgot_config.jvm.enabled {
-        JavaPluginHost::start(&exec_dir, &rustgot_config.jvm, java_plugins).await
-    } else {
-        info!("Java plugins are disabled in rustgot.yml (jvm.enabled: false)");
-        None
-    };
+    if !java_plugins.is_empty() {
+        if rustgot_config.jvm.enabled {
+            load_java_plugin_bridge(
+                &pumpkin_server.server,
+                &exec_dir,
+                &rustgot_config.jvm,
+                java_plugins.len(),
+            )
+            .await;
+        } else {
+            info!("Java plugins are disabled in rustgot.yml (jvm.enabled: false)");
+        }
+    }
 
     let time_elapsed = time.elapsed().saturating_sub(plugin_wait_time);
 
@@ -253,10 +257,6 @@ async fn main() {
 
     pumpkin_server.start().await;
 
-    if let Some(java_plugin_host) = java_plugin_host {
-        java_plugin_host.shutdown().await;
-    }
-
     info!(
         "{}",
         TextComponent::text("The server has stopped.")
@@ -266,6 +266,34 @@ async fn main() {
 
     exit(SERVER_EXIT_CODE.load(Ordering::Acquire));
 }
+/// Registers the Paper plugin bridge; Java and Paper start in the background, so the server
+/// starts without waiting for them.
+async fn load_java_plugin_bridge(
+    server: &Arc<pumpkin_core::server::Server>,
+    server_dir: &std::path::Path,
+    jvm_config: &rustgot_config::JvmConfig,
+    plugin_count: usize,
+) {
+    let bridge = match rustgot_patchbukkit::PatchBukkitPlugin::new(
+        server_dir.to_path_buf(),
+        jvm_config.clone(),
+        plugin_count,
+    ) {
+        Ok(bridge) => bridge,
+        Err(err) => {
+            tracing::error!("Java plugins will not be loaded: {err}");
+            return;
+        }
+    };
+    if let Err(err) = server
+        .plugin_manager
+        .load_builtin_plugin(server, Arc::new(bridge), rustgot_patchbukkit::metadata())
+        .await
+    {
+        tracing::error!("Java plugins will not be loaded: {err}");
+    }
+}
+
 fn print_support_links_and_warning() {
     warn!(
         "{}",

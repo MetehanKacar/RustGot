@@ -161,7 +161,7 @@ spigot.yml
 version_history.json
 world_nether/
 world_the_end/
-patchbukkit/
+/patchbukkit/
 minecraft-sources*/
 
 # RustGot benchmark results

@@ -1,0 +1,5 @@
+java/.gradle/
+java/.kotlin/
+java/build/
+java/*/build/
+java/*/bin/

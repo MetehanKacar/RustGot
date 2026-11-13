@@ -1,0 +1,579 @@
+use std::{
+    cell::Cell,
+    path::{Path, PathBuf},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
+
+use jni::{Env, InitArgsBuilder, JNIVersion, JavaVM};
+use pumpkin::{entity::player::Player, plugin::Context, server::Server};
+use pumpkin_protocol::java::client::play::CommandSuggestion;
+use tokio::sync::mpsc;
+
+use crate::{
+    commands::SimpleCommandSender,
+    events::handler::JvmEventPayload,
+    java::{
+        jvm::commands::{JvmCommand, Location},
+        native_callbacks::{
+            fast_path::try_dispatch_packet_upcall, init_callback_context, initialize_callbacks,
+        },
+        plugin::{command_manager::CommandManager, event_manager::EventManager},
+    },
+    proto::patchbukkit::events::{FireEventResponse, event::Data},
+};
+
+static GLOBAL_JVM: OnceLock<Arc<JavaVM>> = OnceLock::new();
+static NEXT_THREAD_ID: AtomicUsize = AtomicUsize::new(1);
+static PRIMARY_LOCK: ReentrantJvmLock = ReentrantJvmLock::new();
+
+thread_local! {
+    static CURRENT_THREAD_ID: usize = NEXT_THREAD_ID.fetch_add(1, Ordering::Relaxed);
+    static THREAD_ATTACHED: Cell<bool> = const { Cell::new(false) };
+    static IS_JVM_WORKER_THREAD: Cell<bool> = const { Cell::new(false) };
+}
+
+#[inline]
+fn current_thread_id() -> usize {
+    CURRENT_THREAD_ID.with(|&id| id)
+}
+
+pub struct ReentrantJvmLock {
+    owner: AtomicUsize,
+    depth: AtomicUsize,
+    waiters: AtomicUsize,
+    wait_mutex: std::sync::Mutex<()>,
+    condvar: std::sync::Condvar,
+}
+
+pub struct ReentrantJvmGuard<'a> {
+    lock: &'a ReentrantJvmLock,
+}
+
+impl Default for ReentrantJvmLock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ReentrantJvmLock {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            owner: AtomicUsize::new(0),
+            depth: AtomicUsize::new(0),
+            waiters: AtomicUsize::new(0),
+            wait_mutex: std::sync::Mutex::new(()),
+            condvar: std::sync::Condvar::new(),
+        }
+    }
+
+    #[inline]
+    pub fn is_locked_by_current_thread(&self) -> bool {
+        self.owner.load(Ordering::Relaxed) == current_thread_id()
+    }
+
+    #[inline]
+    pub fn lock(&self) -> ReentrantJvmGuard<'_> {
+        let tid = current_thread_id();
+        if self.owner.load(Ordering::Relaxed) == tid {
+            self.depth.fetch_add(1, Ordering::Relaxed);
+            return ReentrantJvmGuard { lock: self };
+        }
+        if self
+            .owner
+            .compare_exchange(0, tid, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            self.depth.store(1, Ordering::Relaxed);
+            return ReentrantJvmGuard { lock: self };
+        }
+        self.lock_slow(tid)
+    }
+
+    #[cold]
+    fn lock_slow(&self, tid: usize) -> ReentrantJvmGuard<'_> {
+        let mut guard = self
+            .wait_mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.waiters.fetch_add(1, Ordering::SeqCst);
+        loop {
+            if self
+                .owner
+                .compare_exchange(0, tid, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                self.waiters.fetch_sub(1, Ordering::Relaxed);
+                self.depth.store(1, Ordering::Relaxed);
+                return ReentrantJvmGuard { lock: self };
+            }
+            guard = self
+                .condvar
+                .wait(guard)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+}
+
+impl Drop for ReentrantJvmGuard<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        let prev = self.lock.depth.fetch_sub(1, Ordering::Relaxed);
+        if prev == 1 {
+            self.lock.owner.store(0, Ordering::SeqCst);
+            if self.lock.waiters.load(Ordering::SeqCst) > 0 {
+                let _guard = self
+                    .lock
+                    .wait_mutex
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                self.lock.condvar.notify_one();
+            }
+        }
+    }
+}
+
+/// Ensures the calling OS thread is permanently attached to the HotSpot JVM so
+/// both JNI calls and Panama FFM upcall stubs can execute with zero attachment overhead.
+#[inline]
+pub fn ensure_thread_attached(jvm: &JavaVM) {
+    if !THREAD_ATTACHED.with(Cell::get)
+        && jvm
+            .attach_current_thread(|_env| Ok::<(), jni::errors::Error>(()))
+            .is_ok()
+    {
+        THREAD_ATTACHED.with(|flag| flag.set(true));
+    }
+}
+
+#[must_use]
+pub fn is_jvm_worker_thread() -> bool {
+    IS_JVM_WORKER_THREAD.with(Cell::get) || PRIMARY_LOCK.is_locked_by_current_thread()
+}
+
+/// Like [`dispatch_packet_direct`] but returns the Java upcall result (`None` if not dispatched).
+/// For outbound packets `Some(1)` means the Java pipeline now owns delivery of the packet.
+#[must_use]
+pub fn dispatch_packet_direct_result(
+    player: &Arc<Player>,
+    server: &Arc<Server>,
+    packet_id: i32,
+    payload: &[u8],
+    is_outbound: bool,
+) -> Option<i32> {
+    let jvm = GLOBAL_JVM.get()?;
+    ensure_thread_attached(jvm);
+    crate::java::native_callbacks::utils::cache_player(player.clone());
+    EventManager::ensure_player_registered_fast(jvm, player, server);
+    crate::java::native_callbacks::fast_path::try_dispatch_packet_upcall_result(
+        player.gameprofile.id,
+        packet_id,
+        payload,
+        is_outbound,
+    )
+}
+
+/// Dispatches an inbound or outbound network packet directly on the calling thread via Panama FFM
+/// without Protobuf encoding, payload cloning, or cross-thread channel hopping.
+#[must_use]
+pub fn dispatch_packet_direct(
+    player: &Arc<Player>,
+    server: &Arc<Server>,
+    packet_id: i32,
+    payload: &[u8],
+    is_outbound: bool,
+) -> bool {
+    let Some(jvm) = GLOBAL_JVM.get() else {
+        return false;
+    };
+    ensure_thread_attached(jvm);
+    crate::java::native_callbacks::utils::cache_player(player.clone());
+    EventManager::ensure_player_registered_fast(jvm, player, server);
+    try_dispatch_packet_upcall(player.gameprofile.id, packet_id, payload, is_outbound)
+}
+
+#[inline]
+fn is_async_bukkit_event(payload: &JvmEventPayload) -> bool {
+    matches!(
+        payload.event.data,
+        Some(Data::AsyncPlayerPreLogin(_) | Data::AsyncPlayerChat(_) | Data::PlayerChat(_))
+    )
+}
+
+/// Fires a Bukkit/Paper event directly on the calling OS thread.
+///
+/// - Asynchronous Bukkit events (`AsyncPlayerPreLoginEvent`, `AsyncPlayerChatEvent`) execute
+///   concurrently on the calling thread without acquiring `PRIMARY_LOCK`.
+/// - Synchronous Bukkit events acquire the re-entrant `PRIMARY_LOCK` and execute directly
+///   in-place on the calling thread (`Server-Ticker`, `Rayon-Worker`, or `tokio-rt-worker`)
+///   with zero channel hop.
+#[must_use]
+pub fn fire_event_direct(payload: JvmEventPayload, plugin: String) -> Option<FireEventResponse> {
+    let jvm = GLOBAL_JVM.get()?;
+    let original_event = payload.event.clone();
+    let is_async = is_async_bukkit_event(&payload);
+    let _guard = if is_async {
+        None
+    } else {
+        Some(PRIMARY_LOCK.lock())
+    };
+    let res = jvm.attach_current_thread(|env| -> anyhow::Result<FireEventResponse> {
+        THREAD_ATTACHED.with(|flag| flag.set(true));
+        EventManager::fire_event_static(env, payload, plugin)
+    });
+    match res {
+        Ok(resp) => Some(resp),
+        Err(e) => {
+            tracing::error!("Failed to fire event directly on JVM: {e}");
+            Some(FireEventResponse {
+                cancelled: false,
+                data: Some(original_event),
+            })
+        }
+    }
+}
+
+#[must_use]
+pub fn fire_event_reentrant(payload: JvmEventPayload, plugin: String) -> Option<FireEventResponse> {
+    fire_event_direct(payload, plugin)
+}
+
+/// Dispatches a command directly on the calling thread while holding the re-entrant primary lock.
+#[must_use]
+pub fn trigger_command_direct(
+    full_command: String,
+    command_sender: SimpleCommandSender,
+) -> Option<anyhow::Result<()>> {
+    let jvm = GLOBAL_JVM.get()?;
+    let _guard = PRIMARY_LOCK.lock();
+    let res = jvm
+        .attach_current_thread(|env| -> anyhow::Result<()> {
+            THREAD_ATTACHED.with(|flag| flag.set(true));
+            CommandManager::trigger_command_static(env, full_command, command_sender)
+        })
+        .map_err(|e| anyhow::anyhow!("Failed to trigger command: {e}"));
+    Some(res)
+}
+
+/// Computes command tab-completions directly on the calling thread while holding the re-entrant primary lock.
+#[must_use]
+pub fn get_tab_complete_direct(
+    command_sender: SimpleCommandSender,
+    full_command: String,
+    location: Option<Location>,
+) -> Option<Option<Vec<CommandSuggestion>>> {
+    let jvm = GLOBAL_JVM.get()?;
+    let _guard = PRIMARY_LOCK.lock();
+    let res = match jvm.attach_current_thread(|env| -> anyhow::Result<_> {
+        THREAD_ATTACHED.with(|flag| flag.set(true));
+        Ok(CommandManager::get_tab_complete_static(
+            env,
+            command_sender,
+            full_command,
+            location,
+        ))
+    }) {
+        Ok(inner) => inner,
+        Err(e) => {
+            tracing::error!("Failed to get tab complete: {e}");
+            None
+        }
+    };
+    Some(res)
+}
+
+pub struct JvmWorker {
+    command_rx: mpsc::Receiver<JvmCommand>,
+    pub event_manager: EventManager,
+    pub command_manager: CommandManager,
+    jvm: Option<Arc<JavaVM>>,
+    context: Option<Arc<Context>>,
+}
+
+impl JvmWorker {
+    #[must_use]
+    pub fn new(command_rx: mpsc::Receiver<JvmCommand>) -> Self {
+        Self {
+            command_rx,
+            event_manager: EventManager::new(),
+            command_manager: CommandManager::new(),
+            jvm: None,
+            context: None,
+        }
+    }
+
+    pub fn attach_thread(mut self) {
+        IS_JVM_WORKER_THREAD.with(|flag| flag.set(true));
+        tracing::info!("JVM worker thread started");
+
+        while let Some(command) = self.command_rx.blocking_recv() {
+            match command {
+                JvmCommand::Initialize {
+                    java,
+                    base_options,
+                    patchbukkit_jar,
+                    paper_classpath,
+                    paper_runtime_path,
+                    plugins_dir,
+                    respond_to,
+                    context,
+                    runtime_handle,
+                    command_tx,
+                    config,
+                } => {
+                    let _guard = PRIMARY_LOCK.lock();
+                    let result = init_callback_context(
+                        context.clone(),
+                        runtime_handle,
+                        command_tx,
+                        (*config).clone(),
+                    )
+                    .and_then(|()| {
+                        self.context = Some(context);
+                        self.initialize_jvm(
+                            &java,
+                            base_options,
+                            &patchbukkit_jar,
+                            paper_classpath,
+                            &paper_runtime_path,
+                            &plugins_dir,
+                            &config,
+                        )
+                    });
+                    let _ = respond_to.send(result);
+                }
+                JvmCommand::DisableAllPlugins { respond_to } => {
+                    let _guard = PRIMARY_LOCK.lock();
+                    let res = if let Some(ref jvm) = self.jvm {
+                        jvm.attach_current_thread(|env| -> anyhow::Result<()> {
+                            THREAD_ATTACHED.with(|flag| flag.set(true));
+                            disable_headless_paper_plugins(env)
+                        })
+                        .map_err(|e| anyhow::anyhow!("Failed to disable plugins: {e}"))
+                    } else {
+                        Err(anyhow::anyhow!("JVM is not initialized"))
+                    };
+
+                    let _ = respond_to.send(res);
+                }
+                JvmCommand::Shutdown { respond_to } => {
+                    let _guard = PRIMARY_LOCK.lock();
+                    let _ = respond_to.send(Ok(()));
+                    break;
+                }
+                JvmCommand::FireEvent {
+                    respond_to,
+                    plugin,
+                    payload,
+                } => {
+                    let original_event = payload.event.clone();
+                    let response = if let Some(resp) = fire_event_direct(payload, plugin) {
+                        resp
+                    } else {
+                        FireEventResponse {
+                            cancelled: false,
+                            data: Some(original_event),
+                        }
+                    };
+
+                    if let Some(respond_to) = respond_to {
+                        let _ = respond_to.send(response);
+                    }
+                }
+                JvmCommand::TriggerCommand {
+                    full_command,
+                    command_sender,
+                    respond_to,
+                } => {
+                    let res = trigger_command_direct(full_command, command_sender)
+                        .unwrap_or_else(|| Err(anyhow::anyhow!("JVM is not initialized")));
+                    let _ = respond_to.send(res);
+                }
+                JvmCommand::GetCommandTabComplete {
+                    command_sender,
+                    full_command,
+                    respond_to,
+                    location,
+                } => {
+                    let res =
+                        get_tab_complete_direct(command_sender, full_command, location).flatten();
+                    let _ = respond_to.send(res);
+                }
+            }
+        }
+
+        tracing::info!("JVM worker thread exited");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn initialize_jvm(
+        &mut self,
+        java: &rustgot_jvm::JavaInstall,
+        base_options: Vec<String>,
+        patchbukkit_jar: &Path,
+        paper_classpath: Vec<PathBuf>,
+        paper_runtime_path: &Path,
+        plugins_dir: &Path,
+        config: &crate::config::patchbukkit::PatchBukkitConfig,
+    ) -> anyhow::Result<()> {
+        // patchbukkit.jar goes first so its bundled dependencies (such as the newer protobuf
+        // runtime) win over Paper's libraries.
+        let mut jar_paths = vec![patchbukkit_jar.to_path_buf()];
+        jar_paths.extend(paper_classpath);
+
+        let separator = if cfg!(windows) { ";" } else { ":" };
+        let classpath = jar_paths
+            .iter()
+            .map(|p| p.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(separator);
+
+        let mut builder = base_options
+            .into_iter()
+            .fold(InitArgsBuilder::new(), |builder, option| {
+                builder.option(option)
+            })
+            .version(JNIVersion::V21)
+            .option(format!("-Djava.class.path={classpath}"))
+            .option("-XX:+IgnoreUnrecognizedVMOptions")
+            .option("-XX:+EnableDynamicAgentLoading")
+            .option("-XX:+StartAttachListener")
+            .option("-Djdk.attach.allowAttachSelf=true")
+            .option("-Dnet.bytebuddy.experimental=true")
+            .option("--enable-native-access=ALL-UNNAMED")
+            .option("--enable-final-field-mutation=ALL-UNNAMED")
+            .option("--add-opens=java.base/java.lang=ALL-UNNAMED")
+            .option("--add-opens=java.base/java.lang.reflect=ALL-UNNAMED")
+            .option("--add-opens=java.base/jdk.internal.vm=ALL-UNNAMED")
+            .option("--add-opens=java.management/sun.management=ALL-UNNAMED")
+            .option("-Dcom.google.protobuf.useUnsafe=false");
+
+        builder = builder.option(format!("-javaagent:{}", patchbukkit_jar.to_string_lossy()));
+
+        if let Some(ref max_heap) = config.jvm.max_heap {
+            builder = builder.option(format!("-Xmx{max_heap}"));
+        }
+        if let Some(ref initial_heap) = config.jvm.initial_heap {
+            builder = builder.option(format!("-Xms{initial_heap}"));
+        }
+        for arg in &config.jvm.extra_args {
+            builder = builder.option(arg.clone());
+        }
+
+        if config.diagnostics.debug_bridge {
+            tracing::info!(
+                "Configuring JVM: max_heap={:?}, initial_heap={:?}, extra_args={:?}",
+                config.jvm.max_heap,
+                config.jvm.initial_heap,
+                config.jvm.extra_args
+            );
+        }
+
+        let jvm_args = builder
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build JVM init args: {e:?}"))?;
+
+        tracing::info!(
+            "Starting Java {} from {} for the Paper plugin bridge",
+            java.version,
+            java.home.display()
+        );
+        let jvm = match JavaVM::with_libjvm(jvm_args, || Ok(&java.libjvm)) {
+            Ok(jvm) => Arc::new(jvm),
+            Err(e) => {
+                if let Ok(existing) = JavaVM::singleton() {
+                    tracing::info!("Reusing existing JavaVM in process");
+                    Arc::new(existing)
+                } else {
+                    return Err(anyhow::anyhow!("Failed to create JavaVM: {e:?}"));
+                }
+            }
+        };
+
+        let _ = GLOBAL_JVM.set(jvm.clone());
+        self.jvm = Some(jvm.clone());
+
+        jvm.attach_current_thread(|env| -> anyhow::Result<()> {
+            THREAD_ATTACHED.with(|flag| flag.set(true));
+            initialize_callbacks(env).map_err(|e| {
+                tracing::error!("Failed to initialize callbacks: {e:?}");
+                e
+            })?;
+
+            boot_headless_paper(env, paper_runtime_path, plugins_dir)?;
+
+            Ok(())
+        })
+        .map_err(|e| anyhow::anyhow!("Failed to attach thread for JVM initialization: {e:?}"))?;
+
+        tracing::info!("JVM initialized successfully");
+        Ok(())
+    }
+}
+
+/// Boots the real Paper server headlessly (CraftBukkit + NMS, never ticked) and loads/enables plugins.
+fn boot_headless_paper(
+    env: &mut Env,
+    runtime_dir: &Path,
+    plugins_dir: &Path,
+) -> anyhow::Result<()> {
+    fn call(env: &mut Env, runtime_dir: &Path, plugins_dir: &Path) -> jni::errors::Result<bool> {
+        let dir = env.new_string(runtime_dir.to_string_lossy())?;
+        let plugins = env.new_string(plugins_dir.to_string_lossy())?;
+        env.call_static_method(
+            jni::jni_str!("org/patchbukkit/bootstrap/HeadlessPaperServer"),
+            jni::jni_str!("boot"),
+            jni::jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Z"),
+            &[(&dir).into(), (&plugins).into()],
+        )?
+        .z()
+    }
+
+    match call(env, runtime_dir, plugins_dir) {
+        Ok(true) => {
+            tracing::info!("Headless Paper server booted and plugins enabled");
+            Ok(())
+        }
+        Ok(false) => Err(anyhow::anyhow!("HeadlessPaperServer.boot returned false")),
+        Err(e) => {
+            env.exception_describe();
+            env.exception_clear();
+            Err(anyhow::anyhow!(
+                "Failed to call HeadlessPaperServer.boot: {e:?}"
+            ))
+        }
+    }
+}
+
+/// Disables all loaded plugins via Paper's native plugin manager.
+fn disable_headless_paper_plugins(env: &mut Env) -> anyhow::Result<()> {
+    fn call(env: &mut Env) -> jni::errors::Result<bool> {
+        env.call_static_method(
+            jni::jni_str!("org/patchbukkit/bootstrap/HeadlessPaperServer"),
+            jni::jni_str!("disablePlugins"),
+            jni::jni_sig!("()Z"),
+            &[],
+        )?
+        .z()
+    }
+
+    match call(env) {
+        Ok(true) => {
+            tracing::info!("Disabled all Java plugins via Paper");
+            Ok(())
+        }
+        Ok(false) => Err(anyhow::anyhow!(
+            "HeadlessPaperServer.disablePlugins returned false"
+        )),
+        Err(e) => {
+            env.exception_describe();
+            env.exception_clear();
+            Err(anyhow::anyhow!(
+                "Failed to call HeadlessPaperServer.disablePlugins: {e:?}"
+            ))
+        }
+    }
+}

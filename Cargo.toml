@@ -26,6 +26,7 @@ members = [
     "crates/pumpkin-world",
     "crates/rustgot-config",
     "crates/rustgot-jvm",
+    "crates/rustgot-patchbukkit",
     "tools/pumpkin-codegen",
     "tools/pumpkin-fuzzer",
     "tools/pumpkin-tester",
@@ -238,6 +239,7 @@ pumpkin-command = { path = "crates/pumpkin-command", default-features = false }
 pumpkin-config = { path = "crates/pumpkin-config", default-features = false }
 rustgot-config = { path = "crates/rustgot-config" }
 rustgot-jvm = { path = "crates/rustgot-jvm" }
+rustgot-patchbukkit = { path = "crates/rustgot-patchbukkit" }
 pumpkin-core = { path = "crates/pumpkin-core", default-features = false }
 pumpkin-data = { path = "crates/pumpkin-data", default-features = false }
 pumpkin-gametest = { path = "crates/pumpkin-gametest", default-features = false }

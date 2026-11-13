@@ -21,7 +21,7 @@ pumpkin-core.workspace = true
 pumpkin-wasm-host.workspace = true
 pumpkin-config.workspace = true
 rustgot-config.workspace = true
-rustgot-jvm.workspace = true
+rustgot-patchbukkit.workspace = true
 pumpkin-data = { workspace = true, features = ["default"] }
 pumpkin-util.workspace = true
 pumpkin-world.workspace = true
