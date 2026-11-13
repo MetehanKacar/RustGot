@@ -2,14 +2,16 @@ use std::sync::{Arc, Mutex};
 
 use pumpkin_data::{Block, BlockId, BlockState};
 use pumpkin_data::{Mirror, Rotation};
+use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
 use pumpkin_util::HeightMap;
 use pumpkin_util::{
     BlockDirection,
-    math::{block_box::BlockBox, position::BlockPos, vector3::Vector3},
+    math::{block_box::BlockBox, position::BlockPos, vector2::Vector2, vector3::Vector3},
     random::{RandomGenerator, RandomImpl, legacy_rand::LegacyRand},
 };
 use tracing::trace;
 
+use crate::chunk::structures::{StructureStartShape, block_box_to_nbt, structure_id};
 use crate::generation::structure::structures::stronghold::StrongholdPieceType;
 pub use crate::world::WorldPortalExt;
 use crate::{
@@ -67,6 +69,32 @@ pub trait StructurePieceBase: Send + Sync {
         seed: i64,
         _chunk_box: &BlockBox,
     );
+
+    /// The orientation vanilla saves as `O`.
+    fn orientation(&self) -> Option<BlockDirection> {
+        self.get_structure_piece().facing
+    }
+
+    /// Whether vanilla's structure start has this piece. Pieces that do what vanilla does in
+    /// `Structure.afterPlace` are neither saved nor checked for positions.
+    fn is_start_piece(&self) -> bool {
+        true
+    }
+
+    /// Vanilla `StructurePiece.addAdditionalSaveData`.
+    fn add_additional_save_data(&self, _tag: &mut NbtCompound) {}
+
+    /// Vanilla `StructurePiece.createTag`.
+    fn create_tag(&self) -> NbtCompound {
+        let piece = self.get_structure_piece();
+        let mut tag = NbtCompound::new();
+        tag.put_string("id", piece.r#type.id().to_string());
+        tag.put("BB", block_box_to_nbt(&piece.bounding_box));
+        tag.put_int("O", self.orientation().map_or(-1, get_2d_data_value));
+        tag.put_int("GD", piece.chain_length as i32);
+        self.add_additional_save_data(&mut tag);
+        tag
+    }
 
     #[expect(clippy::too_many_arguments)]
     fn fill_openings(
@@ -677,11 +705,95 @@ impl StructurePieceBase for StructurePiece {
     }
 }
 
+/// Vanilla `Rotation.LEGACY_CODEC`, the enum constant name.
+#[must_use]
+pub const fn rotation_legacy_name(rotation: Rotation) -> &'static str {
+    match rotation {
+        Rotation::None => "NONE",
+        Rotation::Clockwise90 => "CLOCKWISE_90",
+        Rotation::Rotate180 => "CLOCKWISE_180",
+        Rotation::CounterClockwise90 => "COUNTERCLOCKWISE_90",
+    }
+}
+
+/// Vanilla `Mirror.LEGACY_CODEC`, the enum constant name.
+#[must_use]
+pub const fn mirror_legacy_name(mirror: Mirror) -> &'static str {
+    match mirror {
+        Mirror::None => "NONE",
+        Mirror::LeftRight => "LEFT_RIGHT",
+        Mirror::FrontBack => "FRONT_BACK",
+    }
+}
+
+/// A template id as vanilla saves it, with its namespace.
+#[must_use]
+pub fn namespaced_template(name: &str) -> String {
+    if name.contains(':') {
+        name.to_string()
+    } else {
+        format!("minecraft:{name}")
+    }
+}
+
+/// Vanilla `TemplateStructurePiece.addAdditionalSaveData`.
+pub fn add_template_save_data(tag: &mut NbtCompound, template_name: &str, position: Vector3<i32>) {
+    tag.put_int("TPX", position.x);
+    tag.put_int("TPY", position.y);
+    tag.put_int("TPZ", position.z);
+    tag.put_string("Template", template_name.to_string());
+}
+
+/// Vanilla `ScatteredFeaturePiece.addAdditionalSaveData`. `height_position` stays -1 until
+/// the piece is moved to the ground.
+pub fn add_scattered_feature_save_data(
+    tag: &mut NbtCompound,
+    bounding_box: &BlockBox,
+    facing: Option<BlockDirection>,
+    height_position: i32,
+) {
+    // `StructurePiece.makeBoundingBox` lays the width across the facing axis.
+    let (width, depth) = match facing {
+        Some(BlockDirection::West | BlockDirection::East) => (
+            bounding_box.get_block_count_z(),
+            bounding_box.get_block_count_x(),
+        ),
+        _ => (
+            bounding_box.get_block_count_x(),
+            bounding_box.get_block_count_z(),
+        ),
+    };
+    tag.put_int("Width", width);
+    tag.put_int("Height", bounding_box.get_block_count_y());
+    tag.put_int("Depth", depth);
+    tag.put_int("HPos", height_position);
+}
+
+/// Vanilla `Direction.get2DDataValue`: 0 south, 1 west, 2 north, 3 east.
+pub(crate) const fn get_2d_data_value(direction: BlockDirection) -> i32 {
+    match direction {
+        BlockDirection::South => 0,
+        BlockDirection::West => 1,
+        BlockDirection::North => 2,
+        BlockDirection::East => 3,
+        BlockDirection::Down | BlockDirection::Up => -1,
+    }
+}
+
+/// A start reaching into a chunk: its structure, the chunk it starts in and its pieces.
+pub(crate) type StructureReference = (
+    pumpkin_data::structures::StructureKeys,
+    Vector2<i32>,
+    Arc<Mutex<StructurePiecesCollector>>,
+);
+
 /// Holds all the pieces that make up a generated structure instance.
 #[derive(Default)]
 pub struct StructurePiecesCollector {
     pub pieces: Vec<Box<dyn StructurePieceBase>>,
     cached_box: Option<BlockBox>,
+    /// The last shape handed out, so chunks referencing this start share one copy.
+    start_shape: Option<Arc<StructureStartShape>>,
 }
 
 impl StructurePiecesCollector {
@@ -690,7 +802,53 @@ impl StructurePiecesCollector {
         Self {
             pieces: Vec::new(),
             cached_box: None,
+            start_shape: None,
         }
+    }
+
+    /// The start's piece boxes, or `None` for a start vanilla treats as invalid. Pieces can
+    /// still move while the structure is placed, so the shared shape is only reused while it
+    /// matches them.
+    pub fn start_shape(
+        &mut self,
+        structure: pumpkin_data::structures::StructureKeys,
+    ) -> Option<Arc<StructureStartShape>> {
+        let pieces: Box<[BlockBox]> = self
+            .pieces
+            .iter()
+            .filter(|piece| piece.is_start_piece())
+            .map(|piece| piece.bounding_box())
+            .collect();
+        if let Some(shape) = &self.start_shape
+            && shape.pieces() == &*pieces
+        {
+            return Some(shape.clone());
+        }
+        let shape = Arc::new(StructureStartShape::new(structure, pieces)?);
+        self.start_shape = Some(shape.clone());
+        Some(shape)
+    }
+
+    /// Vanilla `StructureStart.createTag` for a valid start made in `chunk`.
+    #[must_use]
+    pub fn create_start_tag(
+        &self,
+        structure: pumpkin_data::structures::StructureKeys,
+        chunk: Vector2<i32>,
+    ) -> NbtCompound {
+        let children = self
+            .pieces
+            .iter()
+            .filter(|piece| piece.is_start_piece())
+            .map(|piece| NbtTag::Compound(piece.create_tag()))
+            .collect();
+        let mut tag = NbtCompound::new();
+        tag.put_string("id", structure_id(structure));
+        tag.put_int("ChunkX", chunk.x);
+        tag.put_int("ChunkZ", chunk.y);
+        tag.put_int("references", 0);
+        tag.put_list("Children", children);
+        tag
     }
 
     pub fn add_piece(&mut self, piece: Box<dyn StructurePieceBase>) {

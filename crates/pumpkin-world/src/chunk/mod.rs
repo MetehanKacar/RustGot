@@ -18,6 +18,7 @@ use thiserror::Error;
 pub mod format;
 pub mod io;
 pub mod palette;
+pub mod structures;
 
 // TODO
 pub const CHUNK_WIDTH: usize = BlockPalette::SIZE;
@@ -82,6 +83,8 @@ pub struct ChunkData {
     pub dirty: AtomicBool,
     pub inhabited_time: AtomicU64,
     pub custom_data: std::sync::Mutex<NbtCompound>,
+    /// Unset for a chunk saved without structure data.
+    pub structures: std::sync::OnceLock<structures::ChunkStructures>,
 }
 
 pub struct ChunkEntityData {
@@ -645,6 +648,7 @@ impl ChunkData {
             dirty: std::sync::atomic::AtomicBool::new(false),
             inhabited_time: std::sync::atomic::AtomicU64::new(0),
             custom_data: std::sync::Mutex::new(NbtCompound::new()),
+            structures: std::sync::OnceLock::from(structures::ChunkStructures::default()),
         }
     }
 

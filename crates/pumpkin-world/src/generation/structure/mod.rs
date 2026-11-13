@@ -3,6 +3,16 @@ use pumpkin_data::{
     tag::{RegistryKey, get_tag_ids},
 };
 
+use std::sync::{Arc, Mutex};
+
+use pumpkin_util::math::vector2::Vector2;
+
+use crate::chunk::structures::{
+    ChunkStructures, ReferencedStart, StructureReferences, StructureStart,
+};
+use crate::generation::structure::structures::{
+    StructureInstance, StructurePiecesCollector, StructureReference,
+};
 use crate::{
     ProtoChunk,
     biome::BiomeSupplier,
@@ -272,4 +282,79 @@ pub fn lazily_generate_structure(
         let biome = biome_supplier.biome(biome_x, biome_y, biome_z, multi_noise_sampler);
         biomes.contains(&(biome.id as u16))
     })
+}
+
+/// The chunk data for the structure `starts` made in `chunk` and the `references` reaching
+/// into it (vanilla `ChunkAccess.getAllStarts` and `getAllReferences`).
+pub(crate) fn build_chunk_structures<'a>(
+    chunk: Vector2<i32>,
+    starts: impl Iterator<Item = (StructureKeys, &'a Arc<Mutex<StructurePiecesCollector>>)>,
+    references: &[StructureReference],
+) -> ChunkStructures {
+    let starts: Box<[StructureStart]> = starts
+        .filter_map(|(structure, collector)| {
+            let mut collector = collector
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let shape = collector.start_shape(structure)?;
+            Some(StructureStart::new(
+                structure,
+                Some(shape),
+                collector.create_start_tag(structure, chunk),
+            ))
+        })
+        .collect();
+
+    let mut grouped: Vec<(StructureKeys, Vec<ReferencedStart>)> = Vec::new();
+    for (structure, start_chunk, collector) in references {
+        let Some(shape) = collector
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .start_shape(*structure)
+        else {
+            continue;
+        };
+        let reference = ReferencedStart::resolved(*start_chunk, shape);
+        match grouped.iter_mut().find(|(key, _)| key == structure) {
+            Some((_, list)) => {
+                if !list.iter().any(|start| start.chunk == *start_chunk) {
+                    list.push(reference);
+                }
+            }
+            None => grouped.push((*structure, vec![reference])),
+        }
+    }
+
+    ChunkStructures {
+        starts,
+        references: grouped
+            .into_iter()
+            .map(|(structure, starts)| StructureReferences {
+                structure,
+                starts: starts.into_boxed_slice(),
+            })
+            .collect(),
+    }
+}
+
+/// The structure data a proto chunk keeps once it becomes a full chunk: what its structure
+/// stages made, or what it was loaded with when they did not run again.
+pub(crate) fn proto_chunk_structures(chunk: &mut ProtoChunk) -> ChunkStructures {
+    if chunk.structure_starts.is_empty()
+        && chunk.structure_references.is_empty()
+        && let Some(saved) = chunk.saved_structures.take()
+    {
+        return saved;
+    }
+    build_chunk_structures(
+        Vector2::new(chunk.x, chunk.z),
+        chunk
+            .structure_starts
+            .iter()
+            .filter_map(|(structure, instance)| match instance {
+                StructureInstance::Start(position) => Some((*structure, &position.collector)),
+                StructureInstance::Reference(_) => None,
+            }),
+        &chunk.structure_references,
+    )
 }

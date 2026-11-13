@@ -32,7 +32,6 @@ pub(super) struct PieceDescriptor {
     pub overwrite: bool,
     pub bounding_box: BlockBox,
     generation_group: i32,
-    #[cfg(test)]
     pub template_name: &'static str,
 }
 
@@ -65,7 +64,6 @@ impl PieceDescriptor {
             overwrite,
             bounding_box,
             generation_group: 0,
-            #[cfg(test)]
             template_name,
         })
     }

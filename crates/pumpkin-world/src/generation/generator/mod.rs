@@ -20,8 +20,14 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use std::sync::Arc;
 
+use crate::chunk::structures::{ChunkStructures, StructureStartShape};
 use crate::chunk_system::StagedChunkEnum;
+use crate::generation::noise::router::multi_noise_sampler::MultiNoiseSampler;
 use crate::generation::proto_chunk::ProtoChunk;
+use crate::generation::structure::build_chunk_structures;
+use crate::generation::structure::lazily_generate_structure;
+use crate::generation::structure::structures::{StructureGeneratorContext, create_chunk_random};
+use pumpkin_util::math::vector2::Vector2;
 
 pub mod flat;
 
@@ -110,17 +116,27 @@ impl WorldGenerator {
         }
     }
 
-    /// Whether a piece of one of the `wanted` structures covers `pos`. Only noise worlds
-    /// generate structures.
+    /// The shape of the `structure` start made in `chunk`, computed again from the seed. Only
+    /// noise worlds generate structures.
     #[must_use]
-    pub fn has_structure_piece_at(
+    pub fn structure_start_shape(
         &self,
-        pos: pumpkin_util::math::position::BlockPos,
-        wanted: &[StructureKeys],
-    ) -> bool {
+        structure: StructureKeys,
+        chunk: Vector2<i32>,
+    ) -> Option<Arc<StructureStartShape>> {
         match self {
-            Self::Noise(noise_gen) => noise_gen.has_structure_piece_at(pos, wanted),
-            Self::Flat(_) | Self::Custom(_) => false,
+            Self::Noise(noise_gen) => noise_gen.structure_start_shape(structure, chunk),
+            Self::Flat(_) | Self::Custom(_) => None,
+        }
+    }
+
+    /// The structure starts and references of `chunk`, computed again from the seed, for a
+    /// chunk saved without them.
+    #[must_use]
+    pub fn chunk_structures(&self, chunk: Vector2<i32>) -> Option<ChunkStructures> {
+        match self {
+            Self::Noise(noise_gen) => Some(noise_gen.chunk_structures(chunk)),
+            Self::Flat(_) | Self::Custom(_) => None,
         }
     }
 
@@ -177,38 +193,87 @@ impl VanillaGenerator {
                 .any(|biome| self.possible_biomes.contains(biome))
     }
 
-    /// Whether a piece of one of the `wanted` structures covers `pos`.
-    #[must_use]
-    pub fn has_structure_piece_at(
-        &self,
-        pos: pumpkin_util::math::position::BlockPos,
-        wanted: &[StructureKeys],
-    ) -> bool {
+    /// Vanilla `WorldGenerationContext`: `minY = max(level min, generator min)` and
+    /// `height = min(level height, generator depth)`.
+    fn structure_height_range(&self) -> (i32, u16) {
         let dimension = &self.dimension;
         let bottom_y = dimension.min_y as i8;
         let shape = self
             .settings
             .shape
             .trim_height(bottom_y, (dimension.min_y + dimension.height) as u16);
-        let min_y = i32::from(shape.min_y.max(bottom_y));
-        let height = shape.height.min(dimension.height as u16);
-        ProtoChunk::structure_references_in_chunk(
+        (
+            i32::from(shape.min_y.max(bottom_y)),
+            shape.height.min(dimension.height as u16),
+        )
+    }
+
+    /// See [`WorldGenerator::structure_start_shape`].
+    #[must_use]
+    pub fn structure_start_shape(
+        &self,
+        structure: StructureKeys,
+        chunk: Vector2<i32>,
+    ) -> Option<Arc<StructureStartShape>> {
+        let (min_y, height) = self.structure_height_range();
+        let seed = self.random_config.seed as i64;
+        let start = self.global_structure_cache.get_or_compute_structure_start(
+            structure,
+            chunk.x,
+            chunk.y,
+            || {
+                let mut height_sampler =
+                    crate::generation::structure::height_sampler::NoiseHeightSampler::new(self);
+                let mut multi_noise_sampler =
+                    MultiNoiseSampler::generate(&self.base_router.multi_noise);
+                let context = StructureGeneratorContext {
+                    seed,
+                    chunk_x: chunk.x,
+                    chunk_z: chunk.y,
+                    random: create_chunk_random(seed, chunk.x, chunk.y),
+                    sea_level: self.settings.sea_level,
+                    min_y,
+                    height,
+                    height_sampler: Some(&mut height_sampler),
+                    structure_key: Some(structure),
+                };
+                lazily_generate_structure(
+                    &structure,
+                    pumpkin_data::structures::Structure::get(&structure),
+                    context,
+                    &self.biome_supplier,
+                    &mut multi_noise_sampler,
+                )
+            },
+        )?;
+        start
+            .collector
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .start_shape(structure)
+    }
+
+    /// See [`WorldGenerator::chunk_structures`]. A start counts as made in `chunk` when it
+    /// reaches into it, which every vanilla start placed at its chunk does.
+    #[must_use]
+    pub fn chunk_structures(&self, chunk: Vector2<i32>) -> ChunkStructures {
+        let (min_y, height) = self.structure_height_range();
+        let references = ProtoChunk::structure_references_in_chunk(
             self,
-            pos.0.x >> 4,
-            pos.0.z >> 4,
+            chunk.x,
+            chunk.y,
             min_y,
             height,
-            |key| wanted.contains(&key),
-        )
-        .iter()
-        .any(|(_, collector)| {
-            collector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .pieces
+            |_| true,
+        );
+        build_chunk_structures(
+            chunk,
+            references
                 .iter()
-                .any(|piece| piece.bounding_box().contains_pos(&pos.0))
-        })
+                .filter(|(_, start_chunk, _)| *start_chunk == chunk)
+                .map(|(structure, _, collector)| (*structure, collector)),
+            &references,
+        )
     }
 
     #[must_use]

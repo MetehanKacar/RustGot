@@ -49,6 +49,10 @@ impl BridgePlatformPiece {
 }
 
 impl StructurePieceBase for BridgePlatformPiece {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        tag.put_bool("Mob", self.has_blaze_spawner);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

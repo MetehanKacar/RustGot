@@ -7,6 +7,7 @@ use pumpkin_data::{
         OakFenceLikeProperties,
     },
 };
+use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::{
     BlockDirection,
     math::{block_box::BlockBox, position::BlockPos},
@@ -253,6 +254,18 @@ pub struct StrongholdPiece {
 }
 
 impl StrongholdPiece {
+    /// Vanilla `StrongholdPiece.addAdditionalSaveData`, with
+    /// `SmallDoorType.LEGACY_CODEC`'s enum constant names.
+    pub fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        let entry_door = match self.entry_door {
+            EntranceType::Opening => "OPENING",
+            EntranceType::WoodDoor => "WOOD_DOOR",
+            EntranceType::Grates => "GRATES",
+            EntranceType::IronDoor => "IRON_DOOR",
+        };
+        tag.put_string("EntryDoor", entry_door.to_string());
+    }
+
     #[must_use]
     pub const fn new(r#type: StructurePieceType, chain_length: u32, bbox: BlockBox) -> Self {
         Self {

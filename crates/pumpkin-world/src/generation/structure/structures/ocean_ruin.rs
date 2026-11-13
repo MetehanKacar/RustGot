@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use crate::generation::structure::structures::{
+    add_template_save_data, namespaced_template, rotation_legacy_name,
+};
+
 use pumpkin_data::{
     Block, BlockState, Mirror, Rotation,
     block_properties::{ChestLikeProperties, HorizontalFacing},
@@ -407,6 +411,27 @@ impl OceanRuinPiece {
 }
 
 impl StructurePieceBase for OceanRuinPiece {
+    fn orientation(&self) -> Option<pumpkin_util::BlockDirection> {
+        // Vanilla `TemplateStructurePiece` always faces north.
+        Some(pumpkin_util::BlockDirection::North)
+    }
+
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        add_template_save_data(
+            tag,
+            &namespaced_template(&self.template_name),
+            self.template_position,
+        );
+        tag.put_string("Rot", rotation_legacy_name(self.rotation).to_string());
+        tag.put_float("Integrity", self.integrity);
+        // `OceanRuinStructure.Type.LEGACY_CODEC`, the enum constant name.
+        tag.put_string(
+            "BiomeType",
+            if self.is_warm { "WARM" } else { "COLD" }.to_string(),
+        );
+        tag.put_bool("IsLarge", self.is_large);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

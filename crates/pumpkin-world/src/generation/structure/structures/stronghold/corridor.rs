@@ -8,6 +8,8 @@ use pumpkin_util::{
     random::{RandomGenerator, RandomImpl},
 };
 
+use pumpkin_nbt::compound::NbtCompound;
+
 use crate::{
     ProtoChunk,
     generation::structure::{
@@ -85,6 +87,12 @@ impl CorridorPiece {
 }
 
 impl StructurePieceBase for CorridorPiece {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        self.piece.add_additional_save_data(tag);
+        tag.put_bool("Left", self.left_exit);
+        tag.put_bool("Right", self.right_exit);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -214,6 +222,11 @@ impl SmallCorridorPiece {
 }
 
 impl StructurePieceBase for SmallCorridorPiece {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        self.piece.add_additional_save_data(tag);
+        tag.put_int("Steps", self.length);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

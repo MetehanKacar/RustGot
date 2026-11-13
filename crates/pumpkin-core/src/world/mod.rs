@@ -6519,9 +6519,7 @@ impl World {
             .filter_map(|name| pumpkin_data::structures::StructureKeys::from_name(name))
             .collect();
         self.level
-            .world_gen
-            .load()
-            .has_structure_piece_at(pos, &wanted)
+            .has_structure_piece_at(&pos, |structure| wanted.contains(&structure))
     }
 
     /// A random living player in this world.
@@ -8574,7 +8572,12 @@ mod tests {
             &EntityType::COW,
         ));
         // A player had the chunk loaded, so its entities are live.
-        world.level.get_entity_chunk(pos).await.live.store(true, Ordering::Relaxed);
+        world
+            .level
+            .get_entity_chunk(pos)
+            .await
+            .live
+            .store(true, Ordering::Relaxed);
         world.entities.store(Arc::new(vec![cow]));
 
         world.remove_entities_in_chunks([pos]).await;

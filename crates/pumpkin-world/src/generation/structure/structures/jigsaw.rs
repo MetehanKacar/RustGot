@@ -7,6 +7,7 @@ use crate::generation::structure::structures::{
 use crate::generation::structure::template::{
     BlockMirror, BlockPlacer, BlockRotation, PaletteEntry, StructureTemplate,
 };
+use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
 use pumpkin_util::math::block_box::BlockBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
@@ -794,9 +795,109 @@ pub struct PoolElementStructurePiece {
     pub projection: JigsawProjection,
 }
 
+impl JigsawProjection {
+    /// Vanilla `StructureTemplatePool.Projection` serialized name.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Rigid => "rigid",
+            Self::TerrainMatching => "terrain_matching",
+        }
+    }
+}
+
+impl PoolElementKind {
+    /// Vanilla `StructurePoolElement.CODEC`. A list's elements carry its projection
+    /// (`ListPoolElement.setProjectionOnEachElement`).
+    fn to_nbt(&self, projection: JigsawProjection) -> NbtCompound {
+        let mut tag = NbtCompound::new();
+        let element_type = match self {
+            Self::Empty => "minecraft:empty_pool_element",
+            Self::Single {
+                template,
+                processors,
+                legacy,
+                ..
+            } => {
+                tag.put_string("location", template.clone());
+                match processors {
+                    ProcessorListRef::Named(name) => {
+                        tag.put_string("processors", name.clone());
+                    }
+                    // The datapack's inline lists are all empty.
+                    ProcessorListRef::Empty => {
+                        let mut inline = NbtCompound::new();
+                        inline.put_list("processors", Vec::new());
+                        tag.put_compound("processors", inline);
+                    }
+                }
+                if *legacy {
+                    "minecraft:legacy_single_pool_element"
+                } else {
+                    "minecraft:single_pool_element"
+                }
+            }
+            Self::List(elements) => {
+                tag.put_list(
+                    "elements",
+                    elements
+                        .iter()
+                        .map(|element| NbtTag::Compound(element.to_nbt(projection)))
+                        .collect(),
+                );
+                "minecraft:list_pool_element"
+            }
+            Self::Feature(feature) => {
+                tag.put_string("feature", format!("minecraft:{}", feature.to_name()));
+                "minecraft:feature_pool_element"
+            }
+        };
+        tag.put_string("element_type", element_type.to_string());
+        if !matches!(self, Self::Empty) {
+            tag.put_string("projection", projection.name().to_string());
+        }
+        tag
+    }
+}
+
 impl StructurePieceBase for PoolElementStructurePiece {
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        // Vanilla makes every pool element piece at depth 0.
+        tag.put_int("GD", 0);
+        tag.put_int("PosX", self.pos.0.x);
+        tag.put_int("PosY", self.pos.0.y);
+        tag.put_int("PosZ", self.pos.0.z);
+        tag.put_int("ground_level_delta", self.ground_level_delta);
+        tag.put_compound(
+            "pool_element",
+            self.element.kind.to_nbt(self.element.projection),
+        );
+        tag.put_string(
+            "rotation",
+            super::rotation_legacy_name(self.rotation).to_string(),
+        );
+        tag.put_list(
+            "junctions",
+            self.junctions
+                .iter()
+                .map(|junction| {
+                    let mut junction_tag = NbtCompound::new();
+                    junction_tag.put_int("source_x", junction.source_x);
+                    junction_tag.put_int("source_ground_y", junction.source_ground_y);
+                    junction_tag.put_int("source_z", junction.source_z);
+                    junction_tag.put_int("delta_y", junction.delta_y);
+                    junction_tag.put_string("dest_proj", junction.projection.name().to_string());
+                    NbtTag::Compound(junction_tag)
+                })
+                .collect(),
+        );
+        // Vanilla leaves out its default, `JigsawStructure.DEFAULT_LIQUID_SETTINGS`.
+        if self.liquid_settings == LiquidSettings::IgnoreWaterlogDone {
+            tag.put_string("liquid_settings", "ignore_waterlogging".to_string());
+        }
     }
     fn get_structure_piece(&self) -> &crate::generation::structure::structures::StructurePiece {
         &self.piece

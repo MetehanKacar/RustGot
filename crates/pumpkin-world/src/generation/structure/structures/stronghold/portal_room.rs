@@ -63,6 +63,11 @@ impl PortalRoomPiece {
 }
 
 impl StructurePieceBase for PortalRoomPiece {
+    fn add_additional_save_data(&self, tag: &mut NbtCompound) {
+        self.piece.add_additional_save_data(tag);
+        tag.put_bool("Mob", self.spawner_placed);
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
