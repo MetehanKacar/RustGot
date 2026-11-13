@@ -32,7 +32,7 @@ jobs:
       - run: cargo clippy -p rustgot-config -p rustgot-loadbot -p pumpkin --all-targets
       - run: cargo test -p rustgot-config
       - run: cargo build --release --bin rustgot
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: rustgot-${{ matrix.os }}
           path: |
