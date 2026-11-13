@@ -14,7 +14,7 @@ const JAR_NAME: &str = "patchbukkit.jar";
 /// Tag of the RustGot release that carries the jar built from the vendored Java sources.
 pub const RELEASE_TAG: &str = "patchbukkit-0.2.2-rg1";
 /// SHA-256 of that jar; the build script refuses to produce a jar with a different hash.
-pub const RELEASE_SHA256: &str = "41685cb814315835ab0fb6da51c141d4904597e88894c270339f748bd9a1730d";
+pub const RELEASE_SHA256: &str = "0ff5472b65836a3b65fb19a28336e7e3688e39bc814a61392ccd011c247c4404";
 const RELEASE_URL: &str = "https://github.com/MetehanKacar/RustGot/releases/download";
 const MAX_JAR_BYTES: u64 = 128 * 1024 * 1024;
 

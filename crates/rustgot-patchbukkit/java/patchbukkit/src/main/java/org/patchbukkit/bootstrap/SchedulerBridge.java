@@ -67,6 +67,7 @@ public final class SchedulerBridge {
                 if (craftServer.getScheduler() instanceof CraftScheduler scheduler) {
                     scheduler.mainThreadHeartbeat();
                 }
+                tickPaperSchedulers(server);
                 org.patchbukkit.network.VirtualChannelManager.getInstance().tickChannels();
                 org.patchbukkit.bootstrap.CommandBridge.checkAndSyncIfNeeded();
             }
@@ -75,5 +76,26 @@ public final class SchedulerBridge {
         } finally {
             HeadlessPaperServer.restoreThreadState(prevThreadState);
         }
+    }
+
+    /**
+     * RustGot: the rest of what {@code MinecraftServer.tickChildren} runs right after the Bukkit
+     * heartbeat. Plugins that schedule through Paper's global region or entity schedulers (FoliaLib
+     * and similar, e.g. PlaceholderAPI) never ran their tasks without it.
+     */
+    private static void tickPaperSchedulers(net.minecraft.server.MinecraftServer server) {
+        if (org.bukkit.Bukkit.getGlobalRegionScheduler()
+                instanceof io.papermc.paper.threadedregions.scheduler.FoliaGlobalRegionScheduler global) {
+            global.tick();
+        }
+        for (io.papermc.paper.threadedregions.EntityScheduler entityScheduler :
+                server.entitySchedulerTickList.getAllSchedulers()) {
+            if (!entityScheduler.isRetired()) {
+                entityScheduler.executeTick();
+            }
+        }
+        int tick = net.minecraft.server.MinecraftServer.currentTick;
+        io.papermc.paper.adventure.providers.ClickCallbackProviderImpl.ADVENTURE_CLICK_MANAGER.handleQueue(tick);
+        io.papermc.paper.adventure.providers.ClickCallbackProviderImpl.DIALOG_CLICK_MANAGER.handleQueue(tick);
     }
 }
