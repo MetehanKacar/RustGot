@@ -21,6 +21,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::atomic::Ordering,
 };
+use pumpkin_protocol::java::client::play::particle_has_options;
 use tracing::{debug, error, info, trace, warn};
 
 mod active_chunks;
@@ -1474,6 +1475,26 @@ impl World {
         particle_count: i32,
         state_id: u16,
     ) {
+        self.spawn_block_state_particle(
+            pumpkin_data::particle::Particle::Block,
+            position,
+            offset,
+            max_speed,
+            particle_count,
+            state_id,
+        );
+    }
+
+    /// Spawns a particle that carries a `BlockParticleOption` (`block`, `block_crumble`, ...).
+    pub fn spawn_block_state_particle(
+        &self,
+        particle: pumpkin_data::particle::Particle,
+        position: Vector3<f64>,
+        offset: Vector3<f32>,
+        max_speed: f32,
+        particle_count: i32,
+        state_id: u16,
+    ) {
         let mut data = Vec::new();
         if VarInt(i32::from(state_id)).encode(&mut data).is_err() {
             return;
@@ -1485,7 +1506,37 @@ impl World {
             offset,
             max_speed,
             particle_count,
-            (pumpkin_data::particle::Particle::Block.to_id() as i32).into(),
+            (particle.to_id() as i32).into(),
+            &data,
+        );
+        self.broadcast_packet_all(&packet);
+    }
+
+    /// Spawns one `minecraft:trail` particle (vanilla `TrailParticleOption`: target, color,
+    /// duration) moving from `position` towards `target`.
+    pub fn spawn_trail_particle(
+        &self,
+        position: Vector3<f64>,
+        target: Vector3<f64>,
+        color: i32,
+        duration: i32,
+    ) {
+        let mut data = Vec::with_capacity(32);
+        data.extend_from_slice(&target.x.to_be_bytes());
+        data.extend_from_slice(&target.y.to_be_bytes());
+        data.extend_from_slice(&target.z.to_be_bytes());
+        data.extend_from_slice(&color.to_be_bytes());
+        if VarInt(duration).encode(&mut data).is_err() {
+            return;
+        }
+        let packet = CParticle::new(
+            false,
+            false,
+            position,
+            Vector3::new(0.0, 0.0, 0.0),
+            0.0,
+            1,
+            (pumpkin_data::particle::Particle::Trail.to_id() as i32).into(),
             &data,
         );
         self.broadcast_packet_all(&packet);
@@ -1622,6 +1673,10 @@ impl World {
         offset: Vector3<f32>,
         max_speed: f32,
     ) {
+        if particle_has_options(particle) {
+            debug!("not sending {particle:?} particles without their options");
+            return;
+        }
         let packet = CParticle::new(
             false,
             false,

@@ -22,6 +22,7 @@ use crate::command::errors::error_types::CommandErrorType;
 use crate::command::node::dispatcher::CommandDispatcher;
 use crate::command::node::{CommandExecutor, CommandExecutorResult};
 use crate::entity::player::Player;
+use pumpkin_protocol::java::client::play::particle_has_options;
 
 const DESCRIPTION: &str = "Creates particles in the world.";
 const PERMISSION: &str = "minecraft:command.particle";
@@ -42,6 +43,11 @@ fn send_particles(
     force: bool,
     viewers: Option<Vec<Arc<Player>>>,
 ) -> Result<i32, CommandSyntaxError> {
+    // Particle options (`dust{...}`, block states, ...) are not parsed yet; an empty payload
+    // would disconnect every client in range.
+    if particle_has_options(particle) {
+        return Err(ERROR_FAILED.create_without_context());
+    }
     let world = source.world().clone();
     let players: Vec<Arc<Player>> = viewers.unwrap_or_else(|| world.players.load().to_vec());
 

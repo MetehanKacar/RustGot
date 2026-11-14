@@ -4,8 +4,10 @@ use std::sync::{
 };
 
 use crossbeam::atomic::AtomicCell;
+use pumpkin_data::Block;
 use pumpkin_data::BlockState;
 use pumpkin_data::attributes::Attributes;
+use pumpkin_data::block_properties::{CreakingHeartLikeProperties, CreakingHeartState};
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
@@ -352,14 +354,31 @@ impl CreakingEntity {
     pub fn tear_down(&self) {
         let entity = &self.mob_entity.living_entity.entity;
         let world = entity.world.load();
-        let pos = entity.pos.load();
-
-        world.spawn_particle(
-            pos,
-            Vector3::new(0.3, 0.3, 0.3),
+        // Vanilla `Creaking.tearDown`: pale oak wood and awake heart crumbs over the hitbox.
+        let bounding_box = entity.bounding_box.load();
+        let center = (bounding_box.min + bounding_box.max) * 0.5;
+        let spread = Vector3::new(
+            ((bounding_box.max.x - bounding_box.min.x) * 0.3) as f32,
+            ((bounding_box.max.y - bounding_box.min.y) * 0.3) as f32,
+            ((bounding_box.max.z - bounding_box.min.z) * 0.3) as f32,
+        );
+        world.spawn_block_state_particle(
+            Particle::BlockCrumble,
+            center,
+            spread,
             0.0,
             100,
+            Block::PALE_OAK_WOOD.default_state.id.as_u16(),
+        );
+        let mut heart = CreakingHeartLikeProperties::default(&Block::CREAKING_HEART);
+        heart.creaking_heart_state = CreakingHeartState::Awake;
+        world.spawn_block_state_particle(
             Particle::BlockCrumble,
+            center,
+            spread,
+            0.0,
+            10,
+            heart.to_state_id(&Block::CREAKING_HEART).as_u16(),
         );
 
         self.play_sound(Sound::EntityCreakingDeath);

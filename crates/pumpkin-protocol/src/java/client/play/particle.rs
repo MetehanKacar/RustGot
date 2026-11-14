@@ -65,6 +65,44 @@ impl<'a> CParticle<'a> {
     }
 }
 
+/// Whether vanilla registers this particle type with options.
+///
+/// Sending one of these without its data makes the client drop the connection while decoding
+/// `level_particles`.
+#[must_use]
+pub const fn particle_has_options(particle: pumpkin_data::particle::Particle) -> bool {
+    use pumpkin_data::particle::Particle::{
+        Block, BlockCrumble, BlockMarker, DragonBreath, Dust, DustColorTransition, DustPillar,
+        Effect, EntityEffect, FallingDust, Flash, Geyser, GeyserBase, GeyserPlume, GeyserPoof,
+        InstantEffect, Item, SculkCharge, Shriek, TintedLeaves, Trail, Vibration,
+    };
+    matches!(
+        particle,
+        Block
+            | BlockMarker
+            | Geyser
+            | GeyserBase
+            | GeyserPoof
+            | GeyserPlume
+            | DragonBreath
+            | Dust
+            | DustColorTransition
+            | Effect
+            | EntityEffect
+            | FallingDust
+            | TintedLeaves
+            | SculkCharge
+            | Flash
+            | InstantEffect
+            | Item
+            | Vibration
+            | Trail
+            | Shriek
+            | DustPillar
+            | BlockCrumble
+    )
+}
+
 #[must_use]
 pub const fn particle_name_for_v1_7(particle: pumpkin_data::particle::Particle) -> &'static str {
     use pumpkin_data::particle::Particle::{

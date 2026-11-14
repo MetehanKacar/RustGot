@@ -4,7 +4,6 @@ use pumpkin_data::{
     Block, BlockId, BlockStateId,
     effect::StatusEffect,
     entity::EntityType,
-    particle::Particle,
     sound::{Sound, SoundCategory},
     tag::{self, Taggable},
 };
@@ -109,6 +108,11 @@ impl BlockBehaviour for EyeblossomBlock {
 
 impl PlantBlockBase for EyeblossomBlock {}
 
+/// Vanilla `EyeblossomBlock.Type.OPEN.particleColor`.
+const OPEN_PARTICLE_COLOR: i32 = 16_545_810;
+/// Vanilla `EyeblossomBlock.Type.CLOSED.particleColor`.
+const CLOSED_PARTICLE_COLOR: i32 = 6_250_335;
+
 pub fn try_changing_state(world: &Arc<World>, current_block: &Block, pos: &BlockPos) -> bool {
     let is_open = current_block == &Block::OPEN_EYEBLOSSOM;
     let should_be_open = world.eyeblossom_open(pos).unwrap_or(is_open);
@@ -125,15 +129,23 @@ pub fn try_changing_state(world: &Arc<World>, current_block: &Block, pos: &Block
 
     world.set_block_state(pos, new_block.default_state.id, BlockFlags::NOTIFY_ALL);
 
-    world.spawn_particle(
-        pos.to_centered_f64(),
-        Vector3::new(0.0, 0.0, 0.0),
-        0.0,
-        1,
-        Particle::Trail,
-    );
-
+    // Vanilla `EyeblossomBlock.Type.spawnTransformParticle`.
     let mut rng = rand::rng();
+    let start = pos.to_centered_f64();
+    let lifetime = 0.5 + rng.random::<f64>();
+    let velocity = Vector3::new(
+        rng.random::<f64>() - 0.5,
+        rng.random::<f64>() + 1.0,
+        rng.random::<f64>() - 0.5,
+    );
+    let target = start + velocity * lifetime;
+    let color = if is_open {
+        CLOSED_PARTICLE_COLOR
+    } else {
+        OPEN_PARTICLE_COLOR
+    };
+    world.spawn_trail_particle(start, target, color, (20.0 * lifetime) as i32);
+
     for dx in -EYEBLOSSOM_XZ_RANGE..=EYEBLOSSOM_XZ_RANGE {
         for dy in -EYEBLOSSOM_Y_RANGE..=EYEBLOSSOM_Y_RANGE {
             for dz in -EYEBLOSSOM_XZ_RANGE..=EYEBLOSSOM_XZ_RANGE {

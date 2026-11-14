@@ -54,6 +54,7 @@ use pumpkin_util::translation::Locale;
 use pumpkin_util::version::JavaMinecraftVersion;
 use pumpkin_world::chunk::ChunkData;
 use tokio::task::JoinHandle;
+use pumpkin_protocol::java::client::play::particle_has_options;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -2721,6 +2722,10 @@ impl Player {
         particle_count: i32,
         particle: Particle,
     ) {
+        if particle_has_options(particle) {
+            debug!("not sending {particle:?} particles without their options");
+            return;
+        }
         let packet = CParticle::new(
             false,
             false,
@@ -2805,6 +2810,10 @@ impl Player {
         offset: Vector3<f32>,
         max_speed: f32,
     ) {
+        if particle_has_options(particle) {
+            debug!("not sending {particle:?} particles without their options");
+            return;
+        }
         let packet = CParticle::new(
             false,
             false,
